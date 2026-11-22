@@ -66,27 +66,34 @@ desk: Giving up after 3 attempts. Last error: ThrottlingException: Simulated 429
 
 ---
 
-## 3. "Break It" Experiments (Exposing Shortfalls)
-
-### Experiment 1: Statelessness (Memory Failure)
-- Asking `"My name is Ravi"` followed by `"What is my name?"`.
-- **Result:** The model in the second call has no recollection of the first call.
-- **Shortfall:** Calls are completely stateless.
-
-### Experiment 2: Long Question & Blank Terminal Latency
-- Asked comprehensive comparative engineering question about gate, ball, globe, and butterfly valves.
-- **Observed Result:**
-  - **Latency:** **20.60 seconds**
-  - **Tokens Generated:** 4,000 output tokens
-  - **Terminal Behavior:** The terminal was **completely frozen and blank for 20.6 seconds** until all 4,000 tokens were returned at once.
-- **Shortfall:** Lack of token streaming degrades user experience for deep reasoning/long generation. Motivated Challenge 2 streaming.
-
-### Experiment 3: Knowledge Limit & Policy Hallucination
-- Asked `"What is Meridian's return window for opened items?"`.
-- **Result:** Without access to private documents or RAG, the model either declines or invents numbers.
-- **Shortfall:** Need for retrieval grounding (fixed in Challenge 4).
+## Conclusion
+All acceptance criteria for Challenge 1 have been verified and passed.
 
 ---
 
-## Conclusion
-All acceptance criteria for Challenge 1 have been verified and passed.
+## Break it using this
+
+Run these exact commands in your terminal to see the limitations of Challenge 1 in action:
+
+### 1. Break memory (Exposing Statelessness)
+```bash
+desk ask "My name is Ravi"
+desk ask "What is my name?"
+```
+- **What to observe:** The model in the second call will state that it does not know your name because the API calls are completely isolated and stateless.
+- **What fixes it:** Challenge 2 introduces conversation history.
+
+### 2. Break responsiveness (Exposing Lack of Streaming)
+```bash
+desk ask "Please explain in extensive detail the complete differences between gate valves, ball valves, globe valves, and butterfly valves, including their mechanical design, internal flow dynamics, pressure drop characteristics, sealing mechanisms, maintenance requirements, and typical industrial application scenarios."
+```
+- **What to observe:** The terminal remains completely blank and unresponsive for **~20.6 seconds** while the model generates tokens in the background, only printing the text after the entire completion arrives.
+- **What fixes it:** Challenge 2 introduces live token streaming to the terminal.
+
+### 3. Break company knowledge (Exposing Lack of RAG / Policy Hallucination)
+```bash
+desk ask "What is Meridian's return window for opened items?"
+```
+- **What to observe:** Since the model has no access to Meridian Supply Co.'s private internal policy documents, it will either guess/hallucinate a fictional policy or state it doesn't know.
+- **What fixes it:** Challenge 4 introduces RAG (Retrieval-Augmented Generation).
+
