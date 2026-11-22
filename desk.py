@@ -173,13 +173,20 @@ def main(argv=None):
     for stream in (sys.stdout, sys.stderr):
         stream.reconfigure(encoding="utf-8", errors="replace")
     parser = argparse.ArgumentParser(prog="desk", description="Desk: Meridian Supply Co. assistant")
-    sub = parser.add_subparsers(dest="command", required=True)
+    sub = parser.add_subparsers(dest="command")
     ask = sub.add_parser("ask", help="send one question to the model")
     ask.add_argument("question")
     ask.add_argument("--model", help="override DESK_MODEL")
     ask.add_argument("--temperature", type=float, help="sampling temperature (e.g. 0 or 1)")
     ask.set_defaults(func=cmd_ask)
+    if argv is None and len(sys.argv) == 1:
+        parser.print_help()
+        print("\nExample:\n  desk ask \"What is a ball valve?\"")
+        return 0
     args = parser.parse_args(argv)
+    if not getattr(args, "func", None):
+        parser.print_help()
+        return 0
     try:
         args.func(args)
     except DeskError as exc:
