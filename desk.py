@@ -30,23 +30,12 @@ from botocore.exceptions import (
     ReadTimeoutError,
 )
 
-MAX_ATTEMPTS = 3
-BASE_DELAY_S = 1.0
-
-SYSTEM_PROMPT = (
-    "You are Desk, the customer-operations assistant for Meridian Supply Co., "
-    "a B2B distributor of industrial supplies. You help staff answer customer "
-    "questions about orders, products and policies. Be concise and professional."
+from constants import (
+    BASE_DELAY_S,
+    MAX_ATTEMPTS,
+    RETRYABLE_CODES,
+    SYSTEM_PROMPT,
 )
-
-# Error codes worth retrying: throttling and transient server-side trouble.
-RETRYABLE_CODES = {
-    "ThrottlingException",
-    "TooManyRequestsException",
-    "ServiceUnavailableException",
-    "ModelTimeoutException",
-    "InternalServerException",
-}
 
 
 class DeskError(Exception):
