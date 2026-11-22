@@ -2,3 +2,7 @@
 .venv/
 __pycache__/
 *.pyc
+
+# Local data and generation scripts
+data/
+scripts/
