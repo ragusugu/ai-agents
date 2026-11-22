@@ -6,3 +6,7 @@ __pycache__/
 # Local data and generation scripts
 data/
 scripts/
+
+# Chat session files
+sessions/
+save/
