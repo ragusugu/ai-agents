@@ -95,8 +95,13 @@ def _describe(exc):
     return f"{type(exc).__name__}: {exc}"
 
 
-def call_model(client, model, question, temperature, max_tokens):
-    """One Converse call with retry. Returns (text, usage, latency_s, attempts)."""
+def call_model(client, model, messages, temperature, max_tokens):
+    """One Converse call with retry. messages can be a question string or list of dicts."""
+    if isinstance(messages, str):
+        message_list = [{"role": "user", "content": [{"text": messages}]}]
+    else:
+        message_list = messages
+
     inference = {"maxTokens": max_tokens}
     if temperature is not None:
         inference["temperature"] = temperature
@@ -109,7 +114,7 @@ def call_model(client, model, question, temperature, max_tokens):
             resp = client.converse(
                 modelId=model,
                 system=[{"text": SYSTEM_PROMPT}],
-                messages=[{"role": "user", "content": [{"text": question}]}],
+                messages=message_list,
                 inferenceConfig=inference,
             )
             latency = time.perf_counter() - start
@@ -169,16 +174,80 @@ def cmd_ask(args):
     )
 
 
+def cmd_chat(args):
+    model = args.model or os.environ.get("DESK_MODEL")
+    if not model:
+        raise DeskError(
+            "DESK_MODEL environment variable is not set. "
+            "Please specify it in your .env file or pass --model."
+        )
+    max_tokens = int(os.environ.get("DESK_MAX_TOKENS", "4000"))
+    client = make_client()
+    messages = []
+    total_in = 0
+    total_out = 0
+
+    print("Desk Chat (Meridian Supply Co.)")
+    print("Type your message below. Type /exit or /quit to end the conversation.\n")
+
+    while True:
+        try:
+            user_input = input("> ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print("\nGoodbye!")
+            break
+
+        if not user_input:
+            continue
+
+        if user_input.lower() in ("/exit", "/quit", "exit", "quit"):
+            print("Goodbye!")
+            break
+
+        # Append user turn to message history
+        messages.append({"role": "user", "content": [{"text": user_input}]})
+
+        try:
+            text, usage, latency, attempts, stop = call_model(
+                client, model, messages, args.temperature, max_tokens
+            )
+        except DeskError as err:
+            print(f"desk: {err}", file=sys.stderr)
+            messages.pop()
+            continue
+
+        # Append assistant response to message history
+        messages.append({"role": "assistant", "content": [{"text": text}]})
+
+        # Track usage
+        total_in += usage.get("inputTokens", 0)
+        total_out += usage.get("outputTokens", 0)
+
+        print(f"\n{text}\n")
+        print(
+            f"--\nTurn: in {usage['inputTokens']} tok | out {usage['outputTokens']} tok | latency: {latency:.2f}s "
+            f"| Session Total: in {total_in} tok | out {total_out} tok"
+            + (f" | attempts: {attempts}" if attempts > 1 else "")
+        )
+        print()
+
+
 def main(argv=None):
     for stream in (sys.stdout, sys.stderr):
         stream.reconfigure(encoding="utf-8", errors="replace")
     parser = argparse.ArgumentParser(prog="desk", description="Desk: Meridian Supply Co. assistant")
     sub = parser.add_subparsers(dest="command")
+
     ask = sub.add_parser("ask", help="send one question to the model")
     ask.add_argument("question")
     ask.add_argument("--model", help="override DESK_MODEL")
     ask.add_argument("--temperature", type=float, help="sampling temperature (e.g. 0 or 1)")
     ask.set_defaults(func=cmd_ask)
+
+    chat = sub.add_parser("chat", help="start an interactive conversation session")
+    chat.add_argument("--model", help="override DESK_MODEL")
+    chat.add_argument("--temperature", type=float, help="sampling temperature (e.g. 0 or 1)")
+    chat.set_defaults(func=cmd_chat)
     if argv is None and len(sys.argv) == 1:
         parser.print_help()
         print("\nExample:\n  desk ask \"What is a ball valve?\"")
