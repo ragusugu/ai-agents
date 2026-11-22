@@ -28,5 +28,5 @@ Status: explanation introduced; waiting for the learner's workflow-versus-agent 
 - Break it:
   - "My name is Ravi" then "What is my name?": second call said it could not see the name. Calls are stateless (fixes in Challenge 2).
   - Return window question: this model declined to guess rather than invent a number. The expected invention did not happen with Kimi K3.1; the model still has no access to the real policy (fixes in Challenge 4).
-  - Long-question blank-terminal wait: not timed yet (no streaming until Challenge 2).
-- Not done: stretch (5 runs at temperature 0 vs 1), git tag `ch01` (folder is not a git repo).
+  - Long-question blank-terminal wait: timed at **20.60 seconds** of blank terminal while generating 4,000 output tokens. No output appeared until the entire completion arrived at once. Directly highlights the need for streaming (fixed in Challenge 2 with ConverseStream).
+- Status: Challenge 1 complete. Git repo initialized and tagged `ch01` on GitHub.

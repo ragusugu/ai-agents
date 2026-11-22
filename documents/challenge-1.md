@@ -66,5 +66,27 @@ desk: Giving up after 3 attempts. Last error: ThrottlingException: Simulated 429
 
 ---
 
+## 3. "Break It" Experiments (Exposing Shortfalls)
+
+### Experiment 1: Statelessness (Memory Failure)
+- Asking `"My name is Ravi"` followed by `"What is my name?"`.
+- **Result:** The model in the second call has no recollection of the first call.
+- **Shortfall:** Calls are completely stateless.
+
+### Experiment 2: Long Question & Blank Terminal Latency
+- Asked comprehensive comparative engineering question about gate, ball, globe, and butterfly valves.
+- **Observed Result:**
+  - **Latency:** **20.60 seconds**
+  - **Tokens Generated:** 4,000 output tokens
+  - **Terminal Behavior:** The terminal was **completely frozen and blank for 20.6 seconds** until all 4,000 tokens were returned at once.
+- **Shortfall:** Lack of token streaming degrades user experience for deep reasoning/long generation. Motivated Challenge 2 streaming.
+
+### Experiment 3: Knowledge Limit & Policy Hallucination
+- Asked `"What is Meridian's return window for opened items?"`.
+- **Result:** Without access to private documents or RAG, the model either declines or invents numbers.
+- **Shortfall:** Need for retrieval grounding (fixed in Challenge 4).
+
+---
+
 ## Conclusion
 All acceptance criteria for Challenge 1 have been verified and passed.
