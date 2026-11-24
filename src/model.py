@@ -14,6 +14,8 @@ from botocore.exceptions import (
     ReadTimeoutError,
 )
 
+from terminal import ReplyStream
+
 from constants import (
     BASE_DELAY_S,
     MAX_ATTEMPTS,
@@ -28,6 +30,10 @@ class DeskError(Exception):
 
 def make_client():
     region = os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION") or "us-east-1"
+    # Empty project credential fields must not fall back to another AWS account.
+    if "AWS_ACCESS_KEY_ID" in os.environ or "AWS_SECRET_ACCESS_KEY" in os.environ:
+        if not os.environ.get("AWS_ACCESS_KEY_ID", "").strip() or not os.environ.get("AWS_SECRET_ACCESS_KEY", "").strip():
+            raise DeskError("Set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY in .env using your hackathon account keys.")
     # boto3's own retries are switched off (max_attempts=1) so the backoff below is the
     # only retry layer and every attempt is visible to the user.
     cfg = Config(
@@ -111,26 +117,16 @@ def _render_stream(stream, start):
     usage = {}
     stop = None
     first_token = None
-    reasoning_chunks = 0
+    display = ReplyStream()
     try:
         for event in stream:
             if "contentBlockDelta" in event:
                 delta = event["contentBlockDelta"]["delta"]
-                if "reasoningContent" in delta and not parts:
-                    # Reasoning models think before answering. Show progress dots on stderr
-                    # instead of a blank terminal; the reasoning text itself is not kept.
-                    if reasoning_chunks == 0:
-                        print("(thinking", end="", file=sys.stderr, flush=True)
-                    reasoning_chunks += 1
-                    if reasoning_chunks % 100 == 0:
-                        print(".", end="", file=sys.stderr, flush=True)
                 chunk = delta.get("text")
                 if chunk:
                     if first_token is None:
                         first_token = time.perf_counter() - start
-                        if reasoning_chunks:
-                            print(")", file=sys.stderr, flush=True)
-                    print(chunk, end="", flush=True)  # flush, or the terminal buffers it
+                    display.write(chunk)
                     parts.append(chunk)
             elif "messageStop" in event:
                 stop = event["messageStop"].get("stopReason")
@@ -142,14 +138,10 @@ def _render_stream(stream, start):
                         raise DeskError(f"Stream error: {key}: {val.get('message', '')}")
     except (ClientError, ReadTimeoutError, ConnectTimeoutError, EndpointConnectionError) as exc:
         if not parts:
-            if reasoning_chunks:
-                print(")", file=sys.stderr, flush=True)
             raise  # no answer text printed yet, so the caller may safely retry
-        print()
         raise DeskError(f"Stream broke mid-reply: {_describe(exc)}") from exc
-    if reasoning_chunks and first_token is None:
-        print(")", file=sys.stderr, flush=True)  # thought but produced no answer text
-    print()
+    finally:
+        display.finish()
     return "".join(parts).strip(), usage, time.perf_counter() - start, first_token, stop
 
 

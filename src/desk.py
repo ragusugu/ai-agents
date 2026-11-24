@@ -28,6 +28,7 @@ from model import (
     make_client,
     stream_model,
 )
+from terminal import Terminal
 from session import (
     _estimate_tokens,
     _sent_tokens,
@@ -156,13 +157,13 @@ def cmd_chat(args):
     state = {"model": model, "messages": [], "total_in": 0, "total_out": 0}
     messages = state["messages"]
 
-    print("Desk Chat (Meridian Supply Co.)")
-    print(CHAT_HELP + "\n")
+    terminal = Terminal()
+    terminal.banner()
 
     while True:
         try:
             # Windows PowerShell prefixes piped input with a BOM, which would hide a leading "/".
-            user_input = input("> ").lstrip("﻿").strip()
+            user_input = input(terminal.prompt()).lstrip("﻿").strip()
         except (EOFError, KeyboardInterrupt):
             print("\nGoodbye!")
             break
@@ -190,7 +191,7 @@ def cmd_chat(args):
                 f"{len(messages) - 2} recent messages, ~{_estimate_tokens(messages)} tok]"
             )
 
-        print()
+        terminal.assistant()
         try:
             text, usage, latency, first_token, attempts, stop = stream_model(
                 client, model, messages, args.temperature, max_tokens, CHAT_SYSTEM_PROMPT
@@ -217,16 +218,11 @@ def cmd_chat(args):
         state["total_in"] += sent
         state["total_out"] += usage.get("outputTokens", 0)
 
-        first = f"{first_token:.2f}s" if first_token is not None else "n/a"
-        print(
-            f"\n--\nTurn: in {sent} tok" + (f" ({cached} cached)" if cached else "")
-            + f" | out {usage.get('outputTokens', 0)} tok "
-            f"| first token: {first} | total: {latency:.2f}s "
-            f"| Session Total: in {state['total_in']} tok | out {state['total_out']} tok "
-            f"| history: ~{_estimate_tokens(messages)}/{history_limit} tok"
-            + (f" | attempts: {attempts}" if attempts > 1 else "")
+        terminal.usage(
+            sent, usage.get("outputTokens", 0), cached, latency, first_token,
+            state["total_in"], state["total_out"], _estimate_tokens(messages),
+            history_limit, attempts,
         )
-        print()
 
 
 def main(argv=None):
