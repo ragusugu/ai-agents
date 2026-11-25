@@ -25,7 +25,9 @@ CHAT_SYSTEM_PROMPT = (
 
 # Sliding window: max estimated tokens of history to resend each turn.
 # Override with the DESK_HISTORY_TOKENS environment variable.
-MAX_HISTORY_TOKENS = 6000
+MAX_HISTORY_TOKENS = 64000
+# Default max output tokens per reply in interactive chat / ask (override with DESK_MAX_TOKENS).
+DEFAULT_CHAT_MAX_TOKENS = 16000
 
 # Error codes worth retrying: throttling and transient server-side trouble.
 RETRYABLE_CODES = {

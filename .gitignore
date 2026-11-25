@@ -11,3 +11,6 @@ scripts/
 # Chat session files
 sessions/
 save/
+
+# Challenge 3 generated results and per-run evidence
+/output/

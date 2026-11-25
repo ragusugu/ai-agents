@@ -1,0 +1,845 @@
+{
+  "version": 1,
+  "provenance": {
+    "kind": "assistant_source_draft",
+    "author": "Codex",
+    "created_on": "2026-11-24",
+    "method": "Read only the 15 raw email files listed here. No model outputs, instructor answers, database scenario labels or catalog lookup were used to draft expected values. EM-001, whose model output was previously seen, is excluded.",
+    "human_review": {
+      "status": "pending",
+      "reviewer": null,
+      "reviewed_on": null
+    }
+  },
+  "labels": [
+    {
+      "source": {
+        "id": "EM-002",
+        "relative_path": "data/emails/EM-002.txt",
+        "sha256": "ecc9d35244e23116e08f3e561b17f6892aaef1189689b7fb9c5e076f472e541d"
+      },
+      "expected": {
+        "customer": "Alder Packaging LLC",
+        "contact": "Taylor Brooks",
+        "intent": "other",
+        "primary_request_kind": "quote",
+        "requested_date": null,
+        "urgency": null,
+        "purchase_authorized": false,
+        "line_items": [
+          {
+            "sku": "MS-VLV0211",
+            "description": "Bronze Check Valve 2 in NPT",
+            "quantity": 60,
+            "unit": "unit",
+            "description_terms": [
+              [
+                "bronze"
+              ],
+              [
+                "check"
+              ],
+              [
+                "valve",
+                "valves"
+              ]
+            ]
+          }
+        ],
+        "requests": [
+          {
+            "intent": "other",
+            "kind": "quote",
+            "description": "Quote the maintenance material, selling unit and quantity discount.",
+            "description_terms": [
+              [
+                "quote",
+                "quotation"
+              ]
+            ]
+          },
+          {
+            "intent": "other",
+            "kind": "delivery_cost",
+            "description": "Show estimated freight.",
+            "description_terms": [
+              [
+                "freight",
+                "delivery",
+                "shipping"
+              ]
+            ]
+          },
+          {
+            "intent": "other",
+            "kind": "availability",
+            "description": "Show current availability.",
+            "description_terms": [
+              [
+                "availability",
+                "available",
+                "stock"
+              ]
+            ]
+          }
+        ]
+      },
+      "notes": "No purchase order yet. Shutdown is not an explicit requested calendar date; do not use the email date."
+    },
+    {
+      "source": {
+        "id": "EM-004",
+        "relative_path": "data/emails/EM-004.txt",
+        "sha256": "93b4c03b889b2e008bd668a3a53536fa64ff3065125aa574f1ad31834633aee3"
+      },
+      "expected": {
+        "customer": "Beacon Water Systems LLC",
+        "contact": "Avery Stone",
+        "intent": "other",
+        "primary_request_kind": "other",
+        "requested_date": null,
+        "urgency": null,
+        "purchase_authorized": false,
+        "line_items": [
+          {
+            "sku": null,
+            "description": "blue thread sealing paste, medium cartridge uncertain",
+            "quantity": null,
+            "unit": null,
+            "description_terms": [
+              [
+                "blue"
+              ],
+              [
+                "thread"
+              ],
+              [
+                "paste",
+                "sealant",
+                "sealing"
+              ]
+            ]
+          }
+        ],
+        "requests": [
+          {
+            "intent": "other",
+            "kind": "other",
+            "description": "Identify candidate blue thread sealing paste products.",
+            "description_terms": [
+              [
+                "identify",
+                "matching",
+                "match",
+                "candidate",
+                "narrow"
+              ],
+              [
+                "paste",
+                "sealant",
+                "sealing"
+              ]
+            ]
+          },
+          {
+            "intent": "other",
+            "kind": "other",
+            "description": "Explain parcel versus chemical-truck transport.",
+            "description_terms": [
+              [
+                "parcel",
+                "chemical truck",
+                "transport",
+                "shipping"
+              ]
+            ]
+          }
+        ]
+      },
+      "notes": "Maybe 6 is explicitly unconfirmed; quantity and unit are null. Identification is not an order or stock-status request."
+    },
+    {
+      "source": {
+        "id": "EM-006",
+        "relative_path": "data/emails/EM-006.txt",
+        "sha256": "796a5529800f3753a3135a5bf31e660e7dd063bb2ce48ba820e70116b67aa002"
+      },
+      "expected": {
+        "customer": "Dunefield Fabrication LLC",
+        "contact": "Riley Shah",
+        "intent": "other",
+        "primary_request_kind": "quote",
+        "requested_date": null,
+        "urgency": null,
+        "purchase_authorized": false,
+        "line_items": [
+          {
+            "sku": "MS-FST0215",
+            "description": "Socket Cap Screw Box 1/2-13 Zinc plated",
+            "quantity": 20,
+            "unit": "unit",
+            "description_terms": [
+              [
+                "socket"
+              ],
+              [
+                "screw",
+                "screws"
+              ]
+            ]
+          }
+        ],
+        "requests": [
+          {
+            "intent": "other",
+            "kind": "quote",
+            "description": "Quote the screw boxes with specifications and selling unit, no automatic substitutions.",
+            "description_terms": [
+              [
+                "quote",
+                "quotation"
+              ]
+            ]
+          },
+          {
+            "intent": "other",
+            "kind": "availability",
+            "description": "Flag any stock problem instead of substituting.",
+            "description_terms": [
+              [
+                "stock",
+                "availability",
+                "unavailable"
+              ]
+            ]
+          }
+        ]
+      },
+      "notes": "The source says 20 units of a box product. Do not replace the requested selling unit with an inferred pack size."
+    },
+    {
+      "source": {
+        "id": "EM-008",
+        "relative_path": "data/emails/EM-008.txt",
+        "sha256": "85ebd51ccec397e79efa71a5986501c6601218b961c7b602e733df206bfba142"
+      },
+      "expected": {
+        "customer": "Evercrest Plant Services LLC",
+        "contact": "Morgan Chen",
+        "intent": "other",
+        "primary_request_kind": "quote",
+        "requested_date": null,
+        "urgency": null,
+        "purchase_authorized": false,
+        "line_items": [
+          {
+            "sku": null,
+            "description": "large nitrile work gloves; ten selling units conditional on single-item selling unit",
+            "quantity": 10,
+            "unit": "selling unit",
+            "description_terms": [
+              [
+                "large"
+              ],
+              [
+                "nitrile"
+              ],
+              [
+                "glove",
+                "gloves"
+              ],
+              [
+                "if",
+                "conditional",
+                "single",
+                "singly"
+              ]
+            ]
+          },
+          {
+            "sku": null,
+            "description": "impact goggles, tentative separate quote line, not full face shields",
+            "quantity": 4,
+            "unit": null,
+            "description_terms": [
+              [
+                "impact"
+              ],
+              [
+                "goggle",
+                "goggles"
+              ],
+              [
+                "tentative",
+                "maybe",
+                "possible",
+                "optional",
+                "separate quote"
+              ]
+            ]
+          }
+        ],
+        "requests": [
+          {
+            "intent": "other",
+            "kind": "quote",
+            "description": "Quote large nitrile gloves and a tentative impact-goggles line.",
+            "description_terms": [
+              [
+                "quote",
+                "quotation"
+              ]
+            ]
+          },
+          {
+            "intent": "other",
+            "kind": "other",
+            "description": "Identify sizes and explain pack counts.",
+            "description_terms": [
+              [
+                "size",
+                "sizes",
+                "sizing",
+                "pack",
+                "packs",
+                "count",
+                "counts"
+              ]
+            ]
+          },
+          {
+            "intent": "other",
+            "kind": "availability",
+            "description": "Confirm backorders for the requested products.",
+            "description_terms": [
+              [
+                "backorder",
+                "backordered",
+                "stock",
+                "availability"
+              ]
+            ]
+          }
+        ]
+      },
+      "notes": "Quantities 10 and 4 are proposed quote quantities, not purchase authorization. Human review must retain the conditional/tentative wording; unit for goggles is absent."
+    },
+    {
+      "source": {
+        "id": "EM-010",
+        "relative_path": "data/emails/EM-010.txt",
+        "sha256": "458ecc585a9698a1fff2ab99b09ca688b4a7a499f367f1d59ff20c1373515b1e"
+      },
+      "expected": {
+        "customer": "Oakridge Plant Services LLC",
+        "contact": "Morgan Chen",
+        "intent": "status",
+        "primary_request_kind": "status",
+        "requested_date": null,
+        "urgency": null,
+        "purchase_authorized": null,
+        "line_items": [],
+        "requests": [
+          {
+            "intent": "status",
+            "kind": "status",
+            "description": "Give status, warehouse release/dispatch date and tracking or next step for MS-10423.",
+            "description_terms": [
+              [
+                "status",
+                "dispatch",
+                "shipped",
+                "warehouse",
+                "tracking"
+              ]
+            ]
+          }
+        ]
+      },
+      "notes": "Order number is not a SKU. No products or requested delivery date are supplied."
+    },
+    {
+      "source": {
+        "id": "EM-012",
+        "relative_path": "data/emails/EM-012.txt",
+        "sha256": "6a5592a941fcc94f433a8f815faf3639297f497ba75253d49ed5d2bc586ff776"
+      },
+      "expected": {
+        "customer": "Northgrove Water Systems LLC",
+        "contact": "Avery Stone",
+        "intent": "status",
+        "primary_request_kind": "status",
+        "requested_date": null,
+        "urgency": null,
+        "purchase_authorized": null,
+        "line_items": [],
+        "requests": [
+          {
+            "intent": "status",
+            "kind": "status",
+            "description": "Confirm shipping status, carrier details or recorded delivery date for MS-10437.",
+            "description_terms": [
+              [
+                "status",
+                "shipping",
+                "carrier",
+                "delivery",
+                "delivered"
+              ]
+            ]
+          }
+        ]
+      },
+      "notes": "Receiving appointment context does not specify a requested calendar date. An address-change restriction is not purchase authorization."
+    },
+    {
+      "source": {
+        "id": "EM-014",
+        "relative_path": "data/emails/EM-014.txt",
+        "sha256": "afddda9a70533dfa557d59d45ec2d60a2be5724d1fa3889e73bac1c8a7a204bb"
+      },
+      "expected": {
+        "customer": "Granite Water Systems LLC",
+        "contact": "Casey Reed",
+        "intent": "status",
+        "primary_request_kind": "status",
+        "requested_date": null,
+        "urgency": null,
+        "purchase_authorized": null,
+        "line_items": [],
+        "requests": [
+          {
+            "intent": "status",
+            "kind": "status",
+            "description": "Clarify dispatch/delivery dates, current status and tracking for MS-10402.",
+            "description_terms": [
+              [
+                "status",
+                "dispatch",
+                "delivery",
+                "tracking"
+              ]
+            ]
+          }
+        ]
+      },
+      "notes": "Do not infer SKU or quantity from an order ID. No replacement/payment action is requested; new-purchase authorization is not addressed."
+    },
+    {
+      "source": {
+        "id": "EM-016",
+        "relative_path": "data/emails/EM-016.txt",
+        "sha256": "76f96dbe0cb8d4afbf0d49361927144bbeedb3f749b9d4c4c001a7fa4f6eca63"
+      },
+      "expected": {
+        "customer": "Northgrove Fabrication LLC",
+        "contact": "Riley Shah",
+        "intent": "status",
+        "primary_request_kind": "status",
+        "requested_date": null,
+        "urgency": null,
+        "purchase_authorized": null,
+        "line_items": [],
+        "requests": [
+          {
+            "intent": "status",
+            "kind": "status",
+            "description": "Give current status and shipping progress of MS-10465.",
+            "description_terms": [
+              [
+                "status",
+                "shipped",
+                "shipping"
+              ]
+            ]
+          },
+          {
+            "intent": "other",
+            "kind": "other",
+            "description": "Give the recorded order total.",
+            "description_terms": [
+              [
+                "total",
+                "amount"
+              ]
+            ]
+          },
+          {
+            "intent": "other",
+            "kind": "other",
+            "description": "Explain payment terms.",
+            "description_terms": [
+              [
+                "payment",
+                "credit"
+              ],
+              [
+                "terms"
+              ]
+            ]
+          }
+        ]
+      },
+      "notes": "Three distinct information requests. No product identity, quantity, or new purchase instruction."
+    },
+    {
+      "source": {
+        "id": "EM-017",
+        "relative_path": "data/emails/EM-017.txt",
+        "sha256": "d2e8d67f7b135227248d4dfbee539591e34ffe66d02d1378eb6cbe262dec8970"
+      },
+      "expected": {
+        "customer": "Oakridge Water Systems LLC",
+        "contact": "Casey Reed",
+        "intent": "other",
+        "primary_request_kind": "other",
+        "requested_date": null,
+        "urgency": null,
+        "purchase_authorized": null,
+        "line_items": [
+          {
+            "sku": "MS-VLV0200",
+            "description": null,
+            "quantity": null,
+            "unit": null,
+            "description_terms": []
+          }
+        ],
+        "requests": [
+          {
+            "intent": "other",
+            "kind": "other",
+            "description": "Explain base price, original quantity discount, selling unit and resulting merchandise amount.",
+            "description_terms": [
+              [
+                "price",
+                "pricing",
+                "calculation",
+                "discount"
+              ]
+            ]
+          }
+        ]
+      },
+      "notes": "Pricing clarification does not assert a proven price error; classify other rather than inventing a complaint/refund. Quantity and selling unit are asked about, not provided."
+    },
+    {
+      "source": {
+        "id": "EM-019",
+        "relative_path": "data/emails/EM-019.txt",
+        "sha256": "fddec34c79709b6ec359caeca3a9075463fc9daacd9465cc8694f416d655b0c5"
+      },
+      "expected": {
+        "customer": "Evercrest Mechanical LLC",
+        "contact": "Jordan Patel",
+        "intent": "complaint",
+        "primary_request_kind": "complaint",
+        "requested_date": null,
+        "urgency": null,
+        "purchase_authorized": null,
+        "line_items": [],
+        "requests": [
+          {
+            "intent": "complaint",
+            "kind": "complaint",
+            "description": "Investigate possible short carton on MS-10486 and required evidence.",
+            "description_terms": [
+              [
+                "carton",
+                "short",
+                "shortage",
+                "missing"
+              ]
+            ]
+          },
+          {
+            "intent": "complaint",
+            "kind": "complaint",
+            "description": "Investigate the invoice concern and required evidence.",
+            "description_terms": [
+              [
+                "invoice",
+                "price",
+                "pricing"
+              ]
+            ]
+          }
+        ]
+      },
+      "notes": "Two complaint topics of the same kind. Missing product and quantity remain absent. No automatic replacement/refund or new purchase is authorized."
+    },
+    {
+      "source": {
+        "id": "EM-021",
+        "relative_path": "data/emails/EM-021.txt",
+        "sha256": "a69b1abaee3a8d70219c6a297a07345e763e6a332e967659138d367979ff2dcf"
+      },
+      "expected": {
+        "customer": "Millstone Plant Services LLC",
+        "contact": "Morgan Chen",
+        "intent": "complaint",
+        "primary_request_kind": "complaint",
+        "requested_date": null,
+        "urgency": null,
+        "purchase_authorized": null,
+        "line_items": [],
+        "requests": [
+          {
+            "intent": "complaint",
+            "kind": "complaint",
+            "description": "Explain damage-review evidence/photos for the packaging concern on MS-10413.",
+            "description_terms": [
+              [
+                "packaging",
+                "damage",
+                "carton",
+                "photograph",
+                "photos"
+              ]
+            ]
+          },
+          {
+            "intent": "other",
+            "kind": "other",
+            "description": "Flag specialist handling before opening or returning goods.",
+            "description_terms": [
+              [
+                "specialist",
+                "handling",
+                "hazardous"
+              ]
+            ]
+          }
+        ]
+      },
+      "notes": "Affected SKU and quantity will be confirmed later, so line_items is empty; do not infer products from the order database."
+    },
+    {
+      "source": {
+        "id": "EM-023",
+        "relative_path": "data/emails/EM-023.txt",
+        "sha256": "4b2527ff6677460641e2601fdfe3195e4d4fec128712a075d4b9bf99ecb85102"
+      },
+      "expected": {
+        "customer": "Oakridge Water Systems LLC",
+        "contact": "Casey Reed",
+        "intent": "return",
+        "primary_request_kind": "return",
+        "requested_date": null,
+        "urgency": null,
+        "purchase_authorized": null,
+        "line_items": [
+          {
+            "sku": null,
+            "description": "unopened half-inch brass valve",
+            "quantity": 1,
+            "unit": "unit",
+            "description_terms": [
+              [
+                "brass"
+              ],
+              [
+                "valve",
+                "valves"
+              ],
+              [
+                "half inch",
+                "1/2",
+                "0.5"
+              ]
+            ]
+          }
+        ],
+        "requests": [
+          {
+            "intent": "return",
+            "kind": "return",
+            "description": "Assess return of one unopened surplus half-inch brass valve.",
+            "description_terms": [
+              [
+                "return"
+              ]
+            ]
+          },
+          {
+            "intent": "other",
+            "kind": "other",
+            "description": "Explain applicable restocking fee and return window.",
+            "description_terms": [
+              [
+                "restocking",
+                "restock",
+                "fee",
+                "window"
+              ]
+            ]
+          }
+        ]
+      },
+      "notes": "2025-08-04 is delivery history and 2025-09-08 is today, neither a requested date. Do not look up policy eligibility or fabricate a SKU."
+    },
+    {
+      "source": {
+        "id": "EM-025",
+        "relative_path": "data/emails/EM-025.txt",
+        "sha256": "288e807c69624ee1544275585fd03364ef45bce3d28a40e80f992962a8d2459f"
+      },
+      "expected": {
+        "customer": "Juniper Packaging LLC",
+        "contact": "Drew Morgan",
+        "intent": "return",
+        "primary_request_kind": "return",
+        "requested_date": null,
+        "urgency": null,
+        "purchase_authorized": null,
+        "line_items": [
+          {
+            "sku": "MS-VLV0206",
+            "description": null,
+            "quantity": 1,
+            "unit": "unit",
+            "description_terms": []
+          }
+        ],
+        "requests": [
+          {
+            "intent": "return",
+            "kind": "return",
+            "description": "Assess surplus return eligibility of one unopened MS-VLV0206 unit.",
+            "description_terms": [
+              [
+                "return",
+                "returned"
+              ]
+            ]
+          },
+          {
+            "intent": "other",
+            "kind": "other",
+            "description": "Confirm policy version and restocking fee.",
+            "description_terms": [
+              [
+                "policy",
+                "restocking",
+                "fee"
+              ]
+            ]
+          },
+          {
+            "intent": "other",
+            "kind": "other",
+            "description": "Explain information required before an RMA.",
+            "description_terms": [
+              [
+                "information",
+                "details"
+              ],
+              [
+                "rma",
+                "authorization",
+                "authorisation"
+              ]
+            ]
+          }
+        ]
+      },
+      "notes": "Product name is not supplied. RMA and policy questions are explicit secondary requests, not permission to execute a return."
+    },
+    {
+      "source": {
+        "id": "EM-027",
+        "relative_path": "data/emails/EM-027.txt",
+        "sha256": "1fe3109b9659a8a12b35b80717bf3d2288ebc5c7aa465da712f4cda4f7e2b09f"
+      },
+      "expected": {
+        "customer": "Alder Mechanical LLC",
+        "contact": "Jordan Patel",
+        "intent": "return",
+        "primary_request_kind": "return",
+        "requested_date": null,
+        "urgency": null,
+        "purchase_authorized": false,
+        "line_items": [],
+        "requests": [
+          {
+            "intent": "return",
+            "kind": "return",
+            "description": "Explain what information is needed for a possible surplus return.",
+            "description_terms": [
+              [
+                "return"
+              ],
+              [
+                "information",
+                "info",
+                "details"
+              ]
+            ]
+          },
+          {
+            "intent": "other",
+            "kind": "quote",
+            "description": "Explain how to request a replacement-size quotation, no exchange or order yet.",
+            "description_terms": [
+              [
+                "quote",
+                "quotation",
+                "replacement"
+              ]
+            ]
+          }
+        ]
+      },
+      "notes": "Products, count and carton condition are not confirmed. Return is primary under the documented priority policy; replacement-quote workflow remains secondary."
+    },
+    {
+      "source": {
+        "id": "EM-030",
+        "relative_path": "data/emails/EM-030.txt",
+        "sha256": "fe226cbf1442839ff6b285e48e9fb6efe37689479151e89d1e62e35c82791b14"
+      },
+      "expected": {
+        "customer": "Beacon Mechanical LLC",
+        "contact": "Jamie Park",
+        "intent": "other",
+        "primary_request_kind": "other",
+        "requested_date": null,
+        "urgency": null,
+        "purchase_authorized": false,
+        "line_items": [
+          {
+            "sku": "MS-PTL0219",
+            "description": "Reciprocating Saw Extended Runtime 18V kit",
+            "quantity": 200,
+            "unit": "selling unit",
+            "description_terms": [
+              [
+                "reciprocating"
+              ],
+              [
+                "saw",
+                "saws"
+              ]
+            ]
+          }
+        ],
+        "requests": [
+          {
+            "intent": "other",
+            "kind": "other",
+            "description": "Explain tier plus quantity discounts, cap and merchandise calculation separate from tax/freight.",
+            "description_terms": [
+              [
+                "price",
+                "pricing",
+                "discount",
+                "calculation"
+              ]
+            ]
+          }
+        ]
+      },
+      "notes": "Pricing question explicitly denies purchase authorization. Quantity 200 is known; do not infer tier, price or discount values."
+    }
+  ]
+}

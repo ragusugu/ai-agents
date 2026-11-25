@@ -1,0 +1,29 @@
+{
+  "customer": "Example Workshop",
+  "contact": "Example Buyer",
+  "intent": "order",
+  "primary_request": {
+    "intent": "order",
+    "kind": "order",
+    "description": "Place an order for ten brass valves."
+  },
+  "secondary_requests": [
+    {
+      "intent": "status",
+      "kind": "status",
+      "description": "Also confirm the progress of an existing order."
+    }
+  ],
+  "line_items": [
+    {
+      "sku": null,
+      "description": "brass valves",
+      "quantity": 10,
+      "unit": null
+    }
+  ],
+  "requested_date": null,
+  "urgency": null,
+  "confidence": 0.9,
+  "purchase_authorized": true
+}

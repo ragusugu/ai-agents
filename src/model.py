@@ -1,5 +1,6 @@
 """Amazon Bedrock client setup, Converse and ConverseStream API calling, retries and cost estimation."""
 
+import json
 import os
 import random
 import sys
@@ -8,6 +9,7 @@ import time
 import boto3
 from botocore.config import Config
 from botocore.exceptions import (
+    BotoCoreError,
     ClientError,
     ConnectTimeoutError,
     EndpointConnectionError,
@@ -26,15 +28,26 @@ class DeskError(Exception):
     """A failure Desk reports to the user in one clear line."""
 
 
-def make_client():
+class StructuredRequestError(DeskError):
+    """Provider failure, kept separate from JSON/schema repair failures."""
+
+    def __init__(self, message, *, attempts, code, category="provider_error"):
+        super().__init__(message)
+        self.attempts = attempts
+        self.code = code
+        self.category = category
+
+
+def make_client(*, single_attempt=False):
     region = os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION") or "us-east-1"
-    # boto3's own retries are switched off (max_attempts=1) so the backoff below is the
-    # only retry layer and every attempt is visible to the user.
+    # Extraction uses total_max_attempts=1, so its counters include every request.
+    # Existing ask/chat calls keep their previous SDK retry configuration.
     cfg = Config(
         region_name=region,
         connect_timeout=10,
         read_timeout=120,
-        retries={"max_attempts": 1, "mode": "standard"},
+        retries=({"total_max_attempts": 1, "mode": "standard"} if single_attempt else
+                 {"max_attempts": 1, "mode": "standard"}),
     )
     return boto3.client("bedrock-runtime", config=cfg)
 
@@ -204,3 +217,61 @@ def estimate_cost(usage):
         return "n/a (set DESK_PRICE_IN / DESK_PRICE_OUT, USD per 1M tokens)"
     cost = (usage["inputTokens"] * float(p_in) + usage["outputTokens"] * float(p_out)) / 1_000_000
     return f"${cost:.6f}"
+
+
+def call_structured_model(client, model, messages, schema, max_tokens, system_prompt,
+                          *, schema_name="order_request"):
+    """One native-schema response, with at most MAX_ATTEMPTS transport attempts.
+
+    Reuses the existing client, retry codes and backoff policy. No JSON prompt
+    fallback: an unsupported SDK/model/schema is an explicit review outcome.
+    """
+    shape = client.meta.service_model.operation_model("Converse").input_shape
+    if "outputConfig" not in shape.members:
+        raise StructuredRequestError(
+            "Installed Bedrock SDK lacks outputConfig; install requirements.txt.",
+            attempts=0, code="UnsupportedSDK", category="capability_error",
+        )
+    for attempt in range(1, MAX_ATTEMPTS + 1):
+        start = time.perf_counter()
+        try:
+            _simulate_failure()
+            response = client.converse(
+                modelId=model,
+                system=[{"text": system_prompt}],
+                messages=messages,
+                inferenceConfig={"maxTokens": max_tokens},
+                outputConfig={"textFormat": {
+                    "type": "json_schema",
+                    "structure": {"jsonSchema": {
+                        "name": schema_name,
+                        "description": "Schema-constrained email extraction or source verification",
+                        "schema": json.dumps(schema),
+                    }},
+                }},
+            )
+            return {
+                "raw_text": "".join(
+                    block["text"] for block in response.get("output", {}).get("message", {}).get("content", [])
+                    if "text" in block
+                ),
+                "stop_reason": response.get("stopReason"),
+                "usage": response.get("usage", {}),
+                "transport_attempts": attempt,
+                "latency_s": round(time.perf_counter() - start, 3),
+                "request_id": response.get("ResponseMetadata", {}).get("RequestId"),
+            }
+        except (ClientError, BotoCoreError) as exc:
+            code = exc.response.get("Error", {}).get("Code", "ClientError") if isinstance(exc, ClientError) else type(exc).__name__
+            retryable = code in RETRYABLE_CODES or isinstance(
+                exc, (ReadTimeoutError, ConnectTimeoutError, EndpointConnectionError)
+            )
+            if not retryable or attempt == MAX_ATTEMPTS:
+                category = "capability_error" if code in {"ValidationException", "ParamValidationError"} else "provider_error"
+                raise StructuredRequestError(
+                    f"Native Bedrock request failed: {_describe(exc)}",
+                    attempts=attempt, code=code, category=category,
+                ) from exc
+            delay = BASE_DELAY_S * (2 ** (attempt - 1)) + random.uniform(0, 0.25)
+            print(f"[structured request {attempt}/{MAX_ATTEMPTS} failed: {code}; retrying in {delay:.1f}s]", file=sys.stderr)
+            time.sleep(delay)
