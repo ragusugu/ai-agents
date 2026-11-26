@@ -1,4 +1,17 @@
 .env
 .venv/
+/.vscode/
 __pycache__/
 *.pyc
+
+# Local data and generation scripts
+/data/
+/scripts/
+
+# Chat session files
+/sessions/
+/save/
+
+# Generated extraction results and per-run evidence
+/output/
+/destination/
