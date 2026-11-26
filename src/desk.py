@@ -15,6 +15,10 @@ import json
 import os
 import shlex
 import sys
+import time
+from contextlib import nullcontext
+import presentation as ui
+from telemetry import combine_usage, workflow_usage, response_stats, current_turn
 
 # Ensure src directory is on sys.path for internal imports
 SRC_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -83,7 +87,7 @@ def load_dotenv(path=None):
 load_dotenv()
 
 CHAT_HELP = (
-    "Type / for commands. Use arrows + Tab to select; Esc to close."
+    "Tell me what you need, including an email folder when using a skill. Type / for shortcuts."
 )
 DEFAULT_SAMPLE_SIZE = 15
 
@@ -98,17 +102,25 @@ def cmd_ask(args):
     max_tokens = int(os.environ.get("DESK_MAX_TOKENS", DEFAULT_CHAT_MAX_TOKENS))
     client = make_client()
     question = " ".join(args.question) if isinstance(args.question, list) else args.question
-    text, usage, latency, attempts, stop = call_model(
-        client, model, question, args.temperature, max_tokens
-    )
-    print(text if text else "(model returned no text; try a larger DESK_MAX_TOKENS)")
+    with ui.assistant_stream():
+        text, usage, latency, attempts, stop = call_model(
+            client, model, question, args.temperature, max_tokens
+        )
+    if ui.enabled():
+        context = ui.current_conversation()
+        ui.answer(text or "I didn't receive a complete response. Please try again.",
+                  response_stats(usage, latency=latency, attempts=attempts,
+                                 state=context["state"] if context else None))
+    else:
+        print(text if text else "(model returned no text; try a larger DESK_MAX_TOKENS)")
     if stop == "max_tokens":
         print("\n[warning: output was cut off at max tokens]", file=sys.stderr)
-    print(
-        f"\n--\nmodel: {model} | in: {usage['inputTokens']} tok | out: {usage['outputTokens']} tok "
-        f"| latency: {latency:.2f}s | cost: {estimate_cost(usage)}"
-        + (f" | attempts: {attempts}" if attempts > 1 else "")
-    )
+    if not ui.enabled() and current_turn() is None:
+        print(
+            f"\n--\nmodel: {model} | in: {usage['inputTokens']} tok | out: {usage['outputTokens']} tok "
+            f"| latency: {latency:.2f}s | cost: {estimate_cost(usage)}"
+            + (f" | attempts: {attempts}" if attempts > 1 else "")
+        )
     return {"command": "ask", "question": question, "text": text, "usage": usage}
 
 
@@ -124,16 +136,18 @@ def _record_session_turn(state, user_text, assistant_text, *, usage=None):
     messages.append({"role": "user", "content": [{"text": user_text}]})
     messages.append({"role": "assistant", "content": [{"text": assistant_text}]})
     if usage is not None:
-        state["total_in"] += _sent_tokens(usage)
-        state["total_out"] += usage.get("outputTokens", 0)
+        if current_turn() is not None:
+            current_turn().ensure_usage(usage)
+        else:
+            state["total_in"] += _sent_tokens(usage)
+            state["total_out"] += usage.get("outputTokens", 0)
     history_limit = _session_history_limit(state)
     dropped = trim_history(messages, history_limit)
-    if dropped:
+    if dropped and not ui.enabled():
         print(
             f"[window: dropped {dropped} oldest turn(s); kept first exchange + "
             f"{len(messages) - 2} recent messages, ~{_estimate_tokens(messages)} tok]"
         )
-    print(f"[saved to session memory | history: ~{_estimate_tokens(messages)}/{history_limit} tok]")
 
 
 def handle_command(line, state):
@@ -150,30 +164,36 @@ def handle_command(line, state):
         if arg:
             state["pending_user_input"] = arg
         else:
-            print("You're in chat. Enter a message, or use /reset to start fresh.")
+            _chat_notice("I'm ready. Tell me what you need, or use /reset for a fresh conversation.")
     elif cmd == "/reset":
         state["messages"].clear()
         state["total_in"] = state["total_out"] = 0
-        print("[history cleared; the next message starts a fresh conversation]")
+        _chat_notice("I've started a fresh conversation.", "[history cleared; the next message starts a fresh conversation]")
     elif cmd in ("/save", "/load") and not arg:
-        print(f"usage: {cmd} <name>")
+        _chat_notice(f"Give this conversation a name with {cmd} <name>.", f"usage: {cmd} <name>")
     elif cmd == "/save":
         try:
             path = save_session(arg, state)
-            print(f"[saved {len(state['messages'])} messages to {path}]")
+            _chat_notice(f"I've saved this conversation to {path}.", f"[saved {len(state['messages'])} messages to {path}]")
         except DeskError as err:
-            print(f"desk: {err}", file=sys.stderr)
+            if ui.enabled():
+                ui.message(str(err), title="Desk · Couldn't save", error=True)
+            else:
+                print(f"desk: {err}", file=sys.stderr)
     elif cmd == "/load":
         try:
             data = load_session(arg)
         except DeskError as err:
-            print(f"desk: {err}", file=sys.stderr)
+            if ui.enabled():
+                ui.message(str(err), title="Desk · Couldn't open", error=True)
+            else:
+                print(f"desk: {err}", file=sys.stderr)
             return True
         state["messages"][:] = data["messages"]
         state["total_in"] = data.get("total_in", 0)
         state["total_out"] = data.get("total_out", 0)
-        print(f"[loaded '{arg}': {len(state['messages'])} messages, saved {data.get('saved_at', '?')}]")
-        if state["messages"]:
+        _chat_notice(f"I've opened '{arg}'. We can continue where you left off.", f"[loaded '{arg}': {len(state['messages'])} messages, saved {data.get('saved_at', '?')}]")
+        if state["messages"] and not ui.enabled():
             last = state["messages"][-1]["content"][0].get("text", "")
             print(f"[last {state['messages'][-1]['role']} message: {last[:120]}]")
     elif cmd[1:] in commands:
@@ -182,20 +202,31 @@ def handle_command(line, state):
         try:
             tokens = [token[1:-1] if len(token) >= 2 and token[0] == token[-1] and token[0] in "\"'"
                       else token for token in shlex.split(arg, posix=False)]
+            if cmd == "/structured-output":
+                if not tokens:
+                    state["pending_user_input"] = line
+                    return True
+                # Valid shortcut arguments remain local. Ordinary words after
+                # a skill selection are interpreted by the LLM, not argparse.
+                _, remaining = command.parser.parse_known_args(tokens)
+                if remaining and not any(token.startswith("-") for token in remaining):
+                    state["pending_user_input"] = line
+                    return True
             if not tokens and any(a.required and not a.option_strings for a in command.parser._actions):
                 command.parser.print_help()
                 return True
             supports_model = any("--model" in a.option_strings for a in command.parser._actions)
             if supports_model and state.get("model") and not any(token == "--model" or token.startswith("--model=") for token in tokens):
                 tokens += ["--model", state["model"]]
-            exit_code, result = _dispatch_cli([command.cli_command, *tokens])
+            with ui.conversation(state, line):
+                exit_code, result = _dispatch_cli([command.cli_command, *tokens])
             if exit_code == 0 and isinstance(result, dict):
                 if result.get("command") == "ask" and result.get("text"):
                     _record_session_turn(state, line, result["text"], usage=result.get("usage"))
                 elif result.get("command") == "structured-output":
                     budget = max(_session_history_limit(state) * 2, 16000)
                     summary = _format_structured_session_note(result["workflow"], result["args"], max_chars=budget)
-                    _record_session_turn(state, line, summary)
+                    _record_session_turn(state, line, summary, usage=result.get("usage"))
         except ValueError as err:
             print(f"desk: {err}", file=sys.stderr)
         except SystemExit:
@@ -206,12 +237,14 @@ def handle_command(line, state):
         if matches:
             print_command_menu(commands, prefix=cmd[1:])
         else:
-            print(f"Unknown command: {cmd}. Type / to see available commands.")
+            _chat_notice(f"I don't recognize {cmd}. Type / to choose an available shortcut.",
+                         f"Unknown command: {cmd}. Type / to see available commands.")
     return True
 
 
 def cmd_chat(args):
     from chat_commands import chat_reader, command_catalog
+    from skill_tools import tool_config
     model = args.model or os.environ.get("DESK_MODEL")
     if not model:
         raise DeskError(
@@ -225,8 +258,11 @@ def cmd_chat(args):
     state = {"model": model, "messages": [], "total_in": 0, "total_out": 0, "history_limit": history_limit}
     messages = state["messages"]
 
-    print("Desk Chat (Meridian Supply Co.)")
-    print(CHAT_HELP + "\n")
+    if ui.enabled():
+        ui.welcome()
+    else:
+        print("Desk Chat (Meridian Supply Co.)")
+        print(CHAT_HELP + "\n")
     read_line = chat_reader(lambda: command_catalog(build_parser()))
 
     while True:
@@ -234,79 +270,138 @@ def cmd_chat(args):
             # Windows PowerShell prefixes piped input with a BOM, which would hide a leading "/".
             user_input = read_line("> ").lstrip("﻿").strip()
         except (EOFError, KeyboardInterrupt):
-            print("\nGoodbye!")
+            _chat_notice("Talk soon.", "\nGoodbye!")
             break
 
         if not user_input:
             continue
 
-        if user_input.lower() in ("exit", "quit"):
-            print("Goodbye!")
-            break
-
-        if user_input.startswith("/"):
-            if not handle_command(user_input, state):
-                print("Goodbye!")
+        with ui.turn_details(state, model):
+            if user_input.lower() in ("exit", "quit"):
+                _chat_notice("Talk soon.", "Goodbye!")
                 break
-            user_input = state.pop("pending_user_input", "")
-            if not user_input:
+
+            if user_input.startswith("/"):
+                if not handle_command(user_input, state):
+                    _chat_notice("Talk soon.", "Goodbye!")
+                    break
+                user_input = state.pop("pending_user_input", "")
+                if not user_input:
+                    continue
+
+            # Append user turn to message history
+            messages.append({"role": "user", "content": [{"text": user_input}]})
+
+            dropped = trim_history(messages, history_limit)
+            if dropped and not ui.enabled():
+                print(
+                    f"[window: dropped {dropped} oldest turn(s); kept first exchange + "
+                    f"{len(messages) - 2} recent messages, ~{_estimate_tokens(messages)} tok]"
+                )
+
+            print()
+            tool_uses = []
+            try:
+                if client is None:
+                    client = make_client()
+                with ui.assistant_stream() as display:
+                    text, usage, latency, first_token, attempts, stop = stream_model(
+                        client, model, messages, args.temperature, max_tokens, CHAT_SYSTEM_PROMPT,
+                        tool_config=tool_config(), tool_uses=tool_uses,
+                        on_text=display.write if display is not None else None,
+                    )
+                    if display is not None:
+                        display.discard = bool(tool_uses)
+                        display.stats = response_stats(usage, latency=latency, first_token=first_token, attempts=attempts, state=state)
+                        display.stats.update(context_tokens=_estimate_tokens(messages), context_limit=history_limit)
+            except DeskError as err:
+                if ui.enabled():
+                    ui.message(str(err), title="Desk · Couldn't complete", error=True)
+                else:
+                    print(f"desk: {err}", file=sys.stderr)
+                messages.pop()
                 continue
 
-        # Append user turn to message history
-        messages.append({"role": "user", "content": [{"text": user_input}]})
+            if tool_uses:
+                # Keep canonical user/assistant text in session memory, without an
+                # unanswered native tool-use block or a second model rewriting results.
+                used_context = _estimate_tokens(messages)
+                messages.pop()
+                _run_chat_skill(tool_uses, user_input, state, usage=usage,
+                    routing=dict(usage=usage, latency_s=latency, first_token_s=first_token, attempts=attempts,
+                                 context_tokens=used_context, context_limit=history_limit))
+                continue
 
-        dropped = trim_history(messages, history_limit)
-        if dropped:
-            print(
-                f"[window: dropped {dropped} oldest turn(s); kept first exchange + "
-                f"{len(messages) - 2} recent messages, ~{_estimate_tokens(messages)} tok]"
-            )
+            if not text:
+                # An empty assistant turn would make every later request fail validation.
+                print("(model returned no text; try a larger DESK_MAX_TOKENS)", file=sys.stderr)
+                messages.pop()
+                continue
+            if stop == "max_tokens":
+                print("\n[warning: output was cut off at max tokens]", file=sys.stderr)
 
-        print()
-        try:
-            if client is None:
-                client = make_client()
-            text, usage, latency, first_token, attempts, stop = stream_model(
-                client, model, messages, args.temperature, max_tokens, CHAT_SYSTEM_PROMPT
-            )
-        except DeskError as err:
-            print(f"desk: {err}", file=sys.stderr)
-            messages.pop()
-            continue
+            # Append assistant response to message history
+            messages.append({"role": "assistant", "content": [{"text": text}]})
 
-        if not text:
-            # An empty assistant turn would make every later request fail validation.
-            print("(model returned no text; try a larger DESK_MAX_TOKENS)", file=sys.stderr)
-            messages.pop()
-            continue
-        if stop == "max_tokens":
-            print("\n[warning: output was cut off at max tokens]", file=sys.stderr)
+            # Track usage
+            sent = _sent_tokens(usage)
+            cached = usage.get("cacheReadInputTokens", 0)
+            if current_turn() is None:
+                state["total_in"] += sent
+                state["total_out"] += usage.get("outputTokens", 0)
 
-        # Append assistant response to message history
-        messages.append({"role": "assistant", "content": [{"text": text}]})
+            first = f"{first_token:.2f}s" if first_token is not None else "n/a"
+            if not ui.enabled() and current_turn() is None:
+                print(
+                    f"\n--\nTurn: in {sent} tok" + (f" ({cached} cached)" if cached else "")
+                    + f" | out {usage.get('outputTokens', 0)} tok "
+                    f"| first token: {first} | total: {latency:.2f}s "
+                    f"| Session Total: in {state['total_in']} tok | out {state['total_out']} tok "
+                    f"| history: ~{_estimate_tokens(messages)}/{history_limit} tok"
+                    + (f" | attempts: {attempts}" if attempts > 1 else "")
+                )
+            print()
 
-        # Track usage
-        sent = _sent_tokens(usage)
-        cached = usage.get("cacheReadInputTokens", 0)
-        state["total_in"] += sent
-        state["total_out"] += usage.get("outputTokens", 0)
 
-        first = f"{first_token:.2f}s" if first_token is not None else "n/a"
-        print(
-            f"\n--\nTurn: in {sent} tok" + (f" ({cached} cached)" if cached else "")
-            + f" | out {usage.get('outputTokens', 0)} tok "
-            f"| first token: {first} | total: {latency:.2f}s "
-            f"| Session Total: in {state['total_in']} tok | out {state['total_out']} tok "
-            f"| history: ~{_estimate_tokens(messages)}/{history_limit} tok"
-            + (f" | attempts: {attempts}" if attempts > 1 else "")
-        )
-        print()
+def _run_chat_skill(tool_uses, user_input, state, *, usage=None, routing=None):
+    from skill_tools import workflow_argv
+    try:
+        if len(tool_uses) != 1:
+            raise DeskError("Please select one email file or folder per skill request.")
+        argv = workflow_argv(tool_uses[0])
+        argv.extend(["--model", state["model"]])
+        if ui.enabled():
+            ui.message(f"I'll use Structured Output to check the emails in {argv[1]}.")
+        else:
+            print(f"Using structured-output on {argv[1]}.")
+        with ui.conversation(state, user_input, routing or dict(usage=usage or {})):
+            exit_code, result = _dispatch_cli(argv, raise_errors=True)
+            if exit_code or not isinstance(result, dict):
+                raise DeskError("The structured-output workflow did not complete. Check the reported source or storage error before retrying.")
+            budget = max(_session_history_limit(state) * 2, 16000)
+            summary = _format_structured_session_note(result["workflow"], result["args"], max_chars=budget)
+        usage = combine_usage(usage, result.get("usage"))
+    except DeskError as exc:
+        summary = str(exc)
+        if ui.enabled():
+            ui.message(summary, title="Desk · Couldn't complete", error=True)
+        else:
+            print(summary)
+    _record_session_turn(state, user_input, summary, usage=usage)
 
 
 def cmd_rebuild_output(args):
     from extraction import rebuild_outputs
     rebuild_outputs()
-    print("Recovered local output tracking; no model call was made.")
+    _chat_notice("I've recovered the saved output tracking. No model request was needed.",
+                 "Recovered local output tracking; no model call was made.")
+
+
+def _chat_notice(value, plain=None):
+    if ui.enabled():
+        ui.message(value)
+    else:
+        print(plain if plain is not None else value)
 
 
 def _batch_options(args):
@@ -353,11 +448,47 @@ def print_result_sample(manifest, *, sample_size=DEFAULT_SAMPLE_SIZE, output_dir
         print(json.dumps(value, ensure_ascii=False))
 
 
+def _validation_summary(manifest):
+    sources = manifest["sources"]
+    validated = sum(row["status"] == "validated" for row in sources)
+    review = sum(row["status"] == "needs_review" for row in sources)
+    return (f"Validation: {validated + review}/{len(sources)} accounted for | "
+            f"validated: {validated} | needs_review: {review}")
+
+
+def _accuracy_summary(report):
+    if report is None:
+        return "Accuracy: unmeasured (no matching labels available)."
+    label = ("Human-reviewed field accuracy" if report["measurement_kind"] == "human_reviewed_field_accuracy"
+             else "Assistant draft agreement (human review pending)")
+    overall, coverage = report["overall"], report["coverage"]
+    score = "unmeasured" if overall["score"] is None else f"{overall['score']:.1%}"
+    return (f"{label}: {score} ({overall['correct']}/{overall['total']} field checks; "
+            f"{coverage['validated']}/{coverage['labels']} labelled emails validated)")
+
+
+def _workflow_stats(result):
+    context = ui.current_conversation()
+    routing = context["routing"] if context else {}
+    usage = combine_usage(routing.get("usage"), workflow_usage(result))
+    if current_turn() is not None:
+        current_turn().ensure_usage(usage)
+        return current_turn().snapshot()
+    attempts = (result.get("manifest") or {}).get("metrics", {}).get("provider_attempts", 0)
+    stats = response_stats(usage, latency=result.get("elapsed_s", 0) + (routing.get("latency_s") or 0),
+        first_token=routing.get("first_token_s"), attempts=attempts + routing.get("attempts", 0),
+        state=context["state"] if context else None)
+    if routing.get("context_tokens") is not None:
+        stats.update(context_tokens=routing["context_tokens"], context_limit=routing["context_limit"])
+    return stats
+
+
 def _format_structured_session_note(result, args, *, max_chars=96000):
     """Format workflow summary, accuracy report, and outcomes for unified chat memory."""
     plan = result["plan"]
     lines = [
         f"Emails: {plan['source_count']} | reusable: {plan['reused_count']} | new requests: {plan['new_email_payloads']}",
+        f"Input: {plan.get('input_file') or plan['input_dir']}",
         result["label_note"],
     ]
     if args.plan_only:
@@ -367,27 +498,28 @@ def _format_structured_session_note(result, args, *, max_chars=96000):
     manifest = result["manifest"]
     lines.append(f"Batch: {manifest['status']} | manifest: {result['manifest_path']}")
     lines.append(f"Outputs: {plan['output_dir']}/results.jsonl")
+    footer = []
     report = result.get("report")
     if report is not None:
         cov = report["coverage"]
         overall = report["overall"]
         overall_pct = "unmeasured" if overall["score"] is None else f"{overall['score']:.1%}"
-        lines.append(
+        footer.append(
             f"Evaluation ({report['measurement_kind']}): validated {cov['validated']}/{cov['labels']}, "
             f"missing {cov['missing']}, review {cov['needs_review']}, "
             f"overall {overall['correct']}/{overall['total']} ({overall_pct}), report: {result['report_path']}"
         )
-        field_summary = ", ".join(
-            f"{k}: {v['correct']}/{v['total']}" for k, v in report["fields"].items()
-        )
-        lines.append(f"Field scores: {field_summary}")
     if result.get("review_path"):
-        lines.append(f"Human label review: {result['review_path']}")
+        footer.append(f"Human label review: {result['review_path']}")
+    stats = _workflow_stats(result)
+    footer.append(f"Response metrics: latency {stats['latency_s']:.2f}s, input {stats['input_tokens']} tokens, output {stats['output_tokens']} tokens.")
+    footer.extend([_validation_summary(manifest), _accuracy_summary(report)])
 
     outcomes = _ordered_outcomes(manifest, output_dir=plan["output_dir"])
     shown = 0 if args.summary_only else min(args.sample_size, len(outcomes))
     lines.append(f"Terminal displayed first {shown} of {len(outcomes)} emails. Processed outcomes:")
-    used_chars = sum(len(line) + 1 for line in lines)
+    # Reserve space for evaluation so a long outcome sample cannot hide it.
+    used_chars = sum(len(line) + 1 for line in [*lines, *footer])
     included = 0
     for value in outcomes:
         row_text = json.dumps(value, ensure_ascii=False)
@@ -400,11 +532,27 @@ def _format_structured_session_note(result, args, *, max_chars=96000):
         lines.append(row_text)
         used_chars += len(row_text) + 1
         included += 1
-    return "\n".join(lines)
+    return "\n".join([*lines, *footer])
 
 
 def print_accuracy_report(path, report, *, show_results=False, output_dir=None,
-                          sample_size=DEFAULT_SAMPLE_SIZE, include_emails=True):
+                          sample_size=DEFAULT_SAMPLE_SIZE, include_emails=True, stats=None):
+    if ui.enabled():
+        if show_results:
+            from extraction import read_run_history
+            _, rows = read_run_history(output_dir)
+            by_run = {row["run_id"]: row for row in rows}
+            for email in report["emails"][:sample_size]:
+                row = by_run.get(email["run_id"])
+                if row is not None:
+                    ui.email_result(dict(email_id=email["source_id"], status=row["status"], result=row["data"], reason=row.get("reason")))
+        ui.console().print(ui.text(f"Detailed report: {path}", style="#94a3b8"))
+        ui.score_panel(report, stats=stats)
+        return
+    if not include_emails:
+        print(f"Detailed report: {path}")
+        print(_accuracy_summary(report))
+        return
     coverage = report["coverage"]
     print(f"\n{report['measurement_kind']} | validated coverage: {coverage['validated']}/{coverage['labels']} "
           f"| missing: {coverage['missing']} | review: {coverage['needs_review']}")
@@ -431,17 +579,24 @@ def print_accuracy_report(path, report, *, show_results=False, output_dir=None,
     print(f"Report: {path}")
     if report["label_provenance"]["human_review"]["status"] != "approved":
         print("Assistant draft labels await human review; this is not a human-labelled accuracy claim.")
+    print(_accuracy_summary(report))
 
 
 def cmd_structured_output(args):
     from schemas import SCHEMA_PATH
     from structured_output import run_workflow
     model, max_tokens = _batch_options(args)
-    print(f"Schema template: {SCHEMA_PATH}")
-    result = run_workflow(args.source, model, max_tokens=max_tokens, labels_path=args.labels,
-        plan_only=args.plan_only, retry_review=args.retry_review, expected_count=args.expected_count,
-        require_reviewed=args.require_reviewed, progress=_show_batch_progress, output_dir=args.output_dir)
+    if not ui.enabled():
+        print(f"Schema template: {SCHEMA_PATH}")
+    with ui.batch_progress() as progress:
+        result = run_workflow(args.source, model, max_tokens=max_tokens, labels_path=args.labels,
+            plan_only=args.plan_only, retry_review=args.retry_review, expected_count=args.expected_count,
+            require_reviewed=args.require_reviewed, progress=progress or _show_batch_progress, output_dir=args.output_dir)
     plan = result["plan"]
+    if ui.enabled():
+        outcomes = _ordered_outcomes(result["manifest"], output_dir=plan["output_dir"]) if result["manifest"] else []
+        ui.workflow_result(result, args, outcomes, _workflow_stats(result))
+        return {"command": "structured-output", "workflow": result, "args": args, "usage": workflow_usage(result)}
     print(f"Emails: {plan['source_count']} | reusable: {plan['reused_count']} | new requests: {plan['new_email_payloads']}")
     print(result["label_note"])
     if args.plan_only:
@@ -451,15 +606,22 @@ def cmd_structured_output(args):
     print(f"Outputs: {plan['output_dir']}/results.jsonl and needs_review.jsonl (when needed)")
     if not args.summary_only:
         print_result_sample(result["manifest"], sample_size=args.sample_size, output_dir=plan["output_dir"])
-    if result["report"] is not None:
-        print_accuracy_report(result["report_path"], result["report"], include_emails=False)
     if result["review_path"]:
         print(f"Human label review: {result['review_path']}")
-    return {"command": "structured-output", "workflow": result, "args": args}
+    print(_validation_summary(result["manifest"]))
+    stats = _workflow_stats(result)
+    if current_turn() is None:
+        print(f"Response metrics: latency {stats['latency_s']:.2f}s | input {stats['input_tokens']} tokens | output {stats['output_tokens']} tokens")
+    if result["report"] is not None:
+        print_accuracy_report(result["report_path"], result["report"], include_emails=False)
+    else:
+        print(_accuracy_summary(None))
+    return {"command": "structured-output", "workflow": result, "args": args, "usage": workflow_usage(result)}
 
 
 def cmd_accuracy(args):
     from accuracy import DEFAULT_LABELS, accuracy_report, write_label_review
+    started = time.perf_counter()
     model = args.model or os.environ.get("DESK_MODEL")
     if not model:
         raise DeskError("Set DESK_MODEL or pass --model for result provenance selection.")
@@ -468,11 +630,13 @@ def cmd_accuracy(args):
         print(f"Label review checklist: {write_label_review(labels)}")
     path, report = accuracy_report(labels, model=model, require_reviewed=args.require_reviewed,
         output_dir=args.output_dir, allow_historical=args.allow_historical, config_id=args.config)
-    print(f"Selected outputs: {report['output_dir']} | config: {report['selected_config']}")
+    if not ui.enabled():
+        print(f"Selected outputs: {report['output_dir']} | config: {report['selected_config']}")
     if report["historical"]:
-        print("Historical output: this score does not validate the current extraction/verifier policy.")
+        _chat_notice("This is a historical score. It does not verify the current extraction schema or policy.",
+                     "Historical output: this score does not validate the current extraction/verifier policy.")
     print_accuracy_report(path, report, show_results=args.show_results, sample_size=args.sample_size,
-                          output_dir=report["output_dir"])
+                          output_dir=report["output_dir"], stats=response_stats(latency=time.perf_counter() - started))
 
 
 def _positive_count(value):
@@ -494,7 +658,8 @@ def build_parser():
     ask.add_argument("question", nargs="+")
     ask.add_argument("--model", help="override DESK_MODEL")
     ask.add_argument("--temperature", type=float, help="sampling temperature (e.g. 0 or 1)")
-    ask.set_defaults(func=cmd_ask)
+    # Also parsed directly for intermixed flags, bypassing the root subparser.
+    ask.set_defaults(command="ask", func=cmd_ask)
 
     chat = sub.add_parser("chat", help="start an interactive conversation session")
     chat.add_argument("--model", help="override DESK_MODEL")
@@ -534,7 +699,7 @@ def build_parser():
     return parser
 
 
-def _dispatch_cli(argv=None):
+def _dispatch_cli(argv=None, *, raise_errors=False):
     for stream in (sys.stdout, sys.stderr):
         if hasattr(stream, "reconfigure"):
             stream.reconfigure(encoding="utf-8", errors="replace")
@@ -549,11 +714,22 @@ def _dispatch_cli(argv=None):
     if not getattr(args, "func", None):
         parser.print_help()
         return 0, None
-    try:
-        return 0, args.func(args)
-    except DeskError as exc:
-        print(f"desk: {exc}", file=sys.stderr)
-        return 1, None
+    details = ui.turn_details(model=getattr(args, "model", None) or os.environ.get("DESK_MODEL")) if args.command != "chat" else nullcontext()
+    with details:
+        try:
+            result = args.func(args)
+            if isinstance(result, dict) and current_turn() is not None:
+                current_turn().ensure_usage(result.get("usage"))
+            return 0, result
+        except DeskError as exc:
+            if raise_errors:
+                raise
+            if ui.enabled():
+                ui.message(str(exc), title="Desk · Couldn't complete", error=True)
+            else:
+                print(f"desk: {exc}", file=sys.stderr)
+            return 1, None
+
 
 
 def main(argv=None):

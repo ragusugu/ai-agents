@@ -18,7 +18,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "src"))
 
 import accuracy
@@ -35,10 +35,9 @@ EMAIL = "Subject: Quotation\n\nQuote 7 units of ZX-49, steel clips. Do not place
 
 
 def candidate():
-    return dict(customer="Acme Works", contact="Lee Vale", intent="other",
-                primary_request=dict(intent="other", kind="quote", description="Quote seven units of steel clips; purchase is not authorized."),
-                secondary_requests=[], line_items=[dict(sku="ZX-49", description="steel clips", quantity=7, unit="units")],
-                requested_date=None, urgency=None, confidence=0.8, purchase_authorized=False)
+    return dict(customer="Acme Works", intent="other",
+                line_items=[dict(sku="ZX-49", description="steel clips", quantity=7, unit="units")],
+                requested_date=None, urgency=None, confidence=0.8)
 
 
 def ledger(email, value):
@@ -46,7 +45,7 @@ def ledger(email, value):
     fields = grounding.candidate_fields(value)
     return dict(verdict="pass", field_checks=[dict(path=path, verdict="supported", source_quotes=[email],
                 explanation="Offline transport fixture") for path in fields],
-                source_checks=[dict(segment=i, verdict="covered", candidate_paths=["/primary_request/description"],
+                source_checks=[dict(segment=i, verdict="covered", candidate_paths=["/intent"],
                 explanation="Offline transport fixture") for i, _ in enumerate(grounding.source_segments(email))])
 
 
@@ -64,9 +63,12 @@ class FakeClient:
         self.closed = True
 
 
-class OfflineTests(unittest.TestCase):
+class OfflineFixture:
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory(prefix=".challenge3-test-", dir=ROOT)
+        # Keep rapidly changing fixtures out of the tracked workspace tree and
+        # its file watchers, just like normal runtime output.
+        (ROOT / "output").mkdir(exist_ok=True)
+        self.temp = tempfile.TemporaryDirectory(prefix="challenge3-test-", dir=ROOT / "output")
         self.base = Path(self.temp.name).resolve()
         assert self.base.is_relative_to(ROOT)
         self.addCleanup(self.temp.cleanup)
@@ -74,7 +76,7 @@ class OfflineTests(unittest.TestCase):
         guard.start()
         self.addCleanup(guard.stop)
         self.email = self.base / "arbitrary-message.eml"
-        self.email.write_text(EMAIL, encoding="utf-8")
+        self.email.write_text(EMAIL, encoding="utf-8", newline="")
         self.client = FakeClient()
 
     def run_extraction(self, values=None, reports=None, output=None):
@@ -102,6 +104,8 @@ class OfflineTests(unittest.TestCase):
         self.assertTrue(self.client.closed)
         return record, extraction_calls, verifier_calls
 
+
+class OfflineTests(OfflineFixture, unittest.TestCase):
     def test_verified_success_has_receipt_and_isolated_context(self):
         record, calls, checks = self.run_extraction()
         self.assertEqual(record["status"], "validated")
@@ -116,9 +120,9 @@ class OfflineTests(unittest.TestCase):
         self.assertEqual(receipt["payload_sha256"], extraction._payload_hash(candidate()))
 
     def test_semantic_feedback_repairs_unsupported_prose_without_new_context(self):
-        bad = candidate(); bad["primary_request"]["description"] += " The shipment has already departed."
+        bad = candidate(); bad["line_items"][0]["description"] += " The shipment has already departed."
         report = ledger(EMAIL, bad); report["verdict"] = "fail"
-        next(c for c in report["field_checks"] if c["path"] == "/primary_request/description").update(
+        next(c for c in report["field_checks"] if c["path"] == "/line_items/0/description").update(
             verdict="unsupported", explanation="No source evidence that a shipment departed; remove that assertion.")
         record, calls, _ = self.run_extraction([bad, candidate()], [report, ledger(EMAIL, candidate())])
         self.assertEqual((record["status"], record["repair_requests"]), ("validated", 1))
@@ -131,31 +135,32 @@ class OfflineTests(unittest.TestCase):
         record, _, _ = self.run_extraction([value])
         self.assertEqual(record["status"], "validated")
 
-    def test_denial_unit_and_ambiguity_findings_use_shared_two_repair_budget(self):
-        for path, explanation in [("/purchase_authorized", "Explicit denial must be false, not null."),
+    def test_intent_unit_and_date_findings_use_shared_two_repair_budget(self):
+        for path, explanation in [("/intent", "A quote without purchase approval must not be classified as order."),
                                   ("/line_items/0/unit", "Preserve the explicit unit in its dedicated field."),
-                                  ("/primary_request/description", "Do not turn an ambiguous question into a confirmed existing order.")]:
+                                  ("/requested_date", "Do not invent a requested date absent from the email.")]:
             with self.subTest(path=path):
                 value = candidate()
-                if path == "/purchase_authorized":
-                    value["primary_request"]["kind"] = "other"; value["purchase_authorized"] = None
+                if path == "/intent":
+                    value["intent"] = "order"
                 elif path.endswith("/unit"):
                     value["line_items"][0]["unit"] = None
                 else:
-                    value["primary_request"]["description"] = "Confirmed existing order is delayed."
+                    value["requested_date"] = "2026-12-01"
                 report = ledger(EMAIL, value); report["verdict"] = "fail"
                 next(c for c in report["field_checks"] if c["path"] == path).update(verdict="unsupported", explanation=explanation)
                 record, calls, checks = self.run_extraction([value], [report], self.base / str(len(explanation)))
                 self.assertEqual((record["status"], record["repair_requests"], len(calls), len(checks)), ("needs_review", 2, 3, 3))
                 self.assertEqual(record["transport_attempts"], 6)
 
-    def test_missing_topic_or_return_routing_is_actionable(self):
-        report = ledger(EMAIL, candidate()); report["verdict"] = "fail"
+    def test_omitted_allowed_source_fact_is_actionable(self):
+        value = candidate(); value["line_items"][0]["unit"] = None
+        report = ledger(EMAIL, value); report["verdict"] = "fail"
         report["source_checks"][0].update(verdict="omitted", candidate_paths=[],
-            explanation="Separate the independent return eligibility enquiry from the stock and quote topics.")
-        record, calls, _ = self.run_extraction(reports=[report])
+            explanation="Preserve the explicit unit in line_items; it is stated in the email.")
+        record, calls, _ = self.run_extraction([value], [report])
         self.assertEqual(record["status"], "needs_review")
-        self.assertIn("return eligibility", str(calls[1]["validation_errors"]))
+        self.assertIn("explicit unit", str(calls[1]["validation_errors"]))
 
     def test_uncertain_verdict_never_becomes_success(self):
         report = ledger(EMAIL, candidate()); report["verdict"] = "uncertain"
@@ -195,7 +200,7 @@ class OfflineTests(unittest.TestCase):
 
     def test_uncertain_and_alternative_quantities_remain_null(self):
         self.email.write_text("Quote a blue compound; maybe 9, quantity unconfirmed. Alternatively quote 20 or 80 only, not both.", encoding="utf-8")
-        value = candidate(); value["customer"] = value["contact"] = None
+        value = candidate(); value["customer"] = None
         value["line_items"] = [dict(sku=None, description="blue compound; maybe 9 unconfirmed, or mutually exclusive 20/80 quote options", quantity=None, unit=None)]
         record, _, _ = self.run_extraction([value])
         self.assertIsNone(record["data"]["line_items"][0]["quantity"])
@@ -218,9 +223,14 @@ class OfflineTests(unittest.TestCase):
         self.assertIsNone(batch.reusable_record(rows, source, MODEL, fp))
 
     def test_current_corpus_old_outputs_remain_readable_but_not_current(self):
-        marker = json.loads((ROOT / "output/latest-provider-rerun.json").read_text())
-        _, rows = extraction.read_run_history(marker["output_dir"])
-        self.assertEqual(len(rows), 30)
+        # A fresh checkout has no git-ignored output corpus. Build history locally.
+        out = self.base / "historical"
+        extraction.append_result(dict(run_id="historical", model=MODEL,
+            source=dict(path=str(self.email), sha256=hashlib.sha256(self.email.read_bytes()).hexdigest()),
+            schema_sha256="a" * 64, prompt_sha256="b" * 64,
+            status="validated", reason=None, data=candidate()), output_dir=out)
+        _, rows = extraction.read_run_history(out)
+        self.assertEqual(len(rows), 1)
         for row in rows:
             OrderRequest.model_validate_json(json.dumps(row["data"]))
             self.assertIsNone(batch.reusable_record([row], batch._snapshot(Path(row["source"]["path"])), row["model"], extraction.extraction_fingerprint()))
@@ -267,13 +277,10 @@ class OfflineTests(unittest.TestCase):
         self.assertEqual(call.call_args.kwargs["outputConfig"]["textFormat"]["structure"]["jsonSchema"]["name"], "source_grounding")
 
 
-class SelectionTests(OfflineTests):
+class SelectionTests(OfflineFixture, unittest.TestCase):
     # Inherit the offline transport guard and fixture helpers, not the test cases.
     def labels(self):
-        expected = candidate(); request = expected.pop("primary_request")
-        expected.pop("confidence"); expected.pop("secondary_requests")
-        expected["primary_request_kind"] = request["kind"]
-        expected["requests"] = [{**request, "description_terms": [["quote"], ["clips"]]}]
+        expected = candidate(); expected.pop("confidence")
         value = dict(version=1, provenance=dict(kind="assistant_source_draft", author="test", created_on="2026-11-25", method="offline synthetic fixture",
             human_review=dict(status="pending", reviewer=None, reviewed_on=None)), labels=[dict(
             source=dict(id=self.email.stem, relative_path=str(self.email), sha256=hashlib.sha256(self.email.read_bytes()).hexdigest()),
@@ -294,7 +301,7 @@ class SelectionTests(OfflineTests):
 
     def test_historical_and_model_mismatch_require_explicit_selection(self):
         labels = self.labels(); out = self.base / "old"
-        old = {"schema_sha256": "a" * 64, "prompt_sha256": "b" * 64}
+        old = {**extraction.extraction_fingerprint(), "prompt_sha256": "b" * 64}
         with patch.object(extraction, "extraction_fingerprint", return_value=old):
             self.run_extraction(output=out)
         with self.assertRaises(model.DeskError):

@@ -43,58 +43,22 @@ class LineItem(ExtractionModel):
 
 
 Intent = Literal["order", "status", "complaint", "return", "other"]
-RequestKind = Literal[
-    "return", "complaint", "order", "status", "quote", "availability", "delivery_cost", "other"
-]
-# First applicable request wins; request order breaks ties of the same kind.
-REQUEST_PRIORITY = {
-    kind: priority for priority, kind in enumerate(
-        ("return", "complaint", "order", "status", "quote", "availability", "delivery_cost", "other")
-    )
-}
-
-
-class EmailRequest(ExtractionModel):
-    intent: Intent
-    kind: RequestKind
-    description: str
-
-    @model_validator(mode="after")
-    def check_intent(self) -> Self:
-        expected = self.kind if self.kind in {"return", "complaint", "order", "status"} else "other"
-        if self.intent != expected:
-            raise ValueError(f"Request kind {self.kind!r} must use intent {expected!r}.")
-        return self
+INTENT_PRIORITY = ("return", "complaint", "order", "status", "other")
 
 
 class OrderRequest(ExtractionModel):
+    """Only the six requested fields; multi-intent resolves to one primary intent."""
+
     customer: str | None = None
-    contact: str | None = None
-    intent: Intent
-    primary_request: EmailRequest
-    secondary_requests: list[EmailRequest]
+    intent: Intent = Field(description=(
+        "For multiple intents, return only the primary intent using this priority: "
+        + ", ".join(INTENT_PRIORITY) + ". Quotes and stock/price enquiries use other. "
+        "Order requires an explicit purchase instruction."
+    ))
     line_items: list[LineItem]
     requested_date: date | None = None
     urgency: Literal["low", "normal", "high", "urgent"] | None = None
     confidence: float = Field(ge=0, le=1)
-    purchase_authorized: bool | None = None
-
-    @model_validator(mode="after")
-    def check_requests(self) -> Self:
-        requests = [self.primary_request, *self.secondary_requests]
-        if self.intent != self.primary_request.intent:
-            raise ValueError("intent must equal primary_request.intent.")
-        if any(REQUEST_PRIORITY[r.kind] < REQUEST_PRIORITY[self.primary_request.kind] for r in requests):
-            raise ValueError("Choose primary request by return, complaint, order, status, quote, availability, delivery_cost, other priority.")
-        identities = [(r.kind, " ".join(r.description.casefold().split())) for r in requests]
-        if len(set(identities)) != len(identities):
-            raise ValueError("Do not duplicate the same request in primary/secondary requests.")
-        kinds = {r.kind for r in requests}
-        if "order" in kinds and self.purchase_authorized is not True:
-            raise ValueError("An order request requires explicit purchase authorization; quote-first requests are other.")
-        if "quote" in kinds and "order" not in kinds and self.purchase_authorized is not False:
-            raise ValueError("A quotation without a purchase instruction must have purchase_authorized=false.")
-        return self
 
 
 class FieldCheck(ExtractionModel):

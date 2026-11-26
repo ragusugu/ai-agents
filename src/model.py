@@ -5,6 +5,7 @@ import os
 import random
 import sys
 import time
+from telemetry import note_response, note_failure
 
 import boto3
 from botocore.config import Config
@@ -95,10 +96,12 @@ def call_model(client, model, messages, temperature, max_tokens):
             latency = time.perf_counter() - start
             blocks = resp["output"]["message"]["content"]
             text = "".join(b["text"] for b in blocks if "text" in b).strip()
+            note_response(resp["usage"], started=start, attempts=attempt)
             return text, resp["usage"], latency, attempt, resp.get("stopReason")
         except ClientError as exc:
             code = exc.response.get("Error", {}).get("Code", "")
             if code not in RETRYABLE_CODES:
+                note_failure(attempt)
                 raise DeskError(f"Request failed (not retryable): {_describe(exc)}") from exc
             last = exc
         except (ReadTimeoutError, ConnectTimeoutError, EndpointConnectionError) as exc:
@@ -112,61 +115,103 @@ def call_model(client, model, messages, temperature, max_tokens):
             )
             time.sleep(delay)
 
+    note_failure(MAX_ATTEMPTS)
     raise DeskError(
         f"Giving up after {MAX_ATTEMPTS} attempts. Last error: {_describe(last)}. "
         "Check your network and AWS credentials, or wait a minute if you are being rate limited."
     )
 
 
-def _render_stream(stream, start):
+def _render_stream(stream, start, *, tool_uses=None, on_text=None, on_usage=None):
     """Print text chunks as they arrive. Returns (text, usage, latency, first_token_s, stop)."""
     parts = []
     usage = {}
     stop = None
     first_token = None
     reasoning_chunks = 0
+    tools = {}
     try:
         for event in stream:
-            if "contentBlockDelta" in event:
+            if "contentBlockStart" in event:
+                block = event["contentBlockStart"]
+                tool = block.get("start", {}).get("toolUse")
+                if tool is not None:
+                    index = block["contentBlockIndex"]
+                    if tool_uses is None or index in tools:
+                        raise DeskError("Unexpected skill request; no workflow was run.")
+                    tools[index] = {**tool, "input": "", "complete": False}
+            elif "contentBlockDelta" in event:
                 delta = event["contentBlockDelta"]["delta"]
+                if "toolUse" in delta:
+                    index = event["contentBlockDelta"]["contentBlockIndex"]
+                    if index not in tools or tools[index]["complete"]:
+                        raise DeskError("Malformed skill request; no workflow was run.")
+                    if first_token is None:
+                        first_token = time.perf_counter() - start
+                        if reasoning_chunks and on_text is None:
+                            print(")", file=sys.stderr, flush=True)
+                    tools[index]["input"] += delta["toolUse"].get("input", "")
                 if "reasoningContent" in delta and not parts:
                     # Reasoning models think before answering. Show progress dots on stderr
                     # instead of a blank terminal; the reasoning text itself is not kept.
-                    if reasoning_chunks == 0:
+                    if reasoning_chunks == 0 and on_text is None:
                         print("(thinking", end="", file=sys.stderr, flush=True)
                     reasoning_chunks += 1
-                    if reasoning_chunks % 100 == 0:
+                    if reasoning_chunks % 100 == 0 and on_text is None:
                         print(".", end="", file=sys.stderr, flush=True)
                 chunk = delta.get("text")
                 if chunk:
                     if first_token is None:
                         first_token = time.perf_counter() - start
-                        if reasoning_chunks:
+                        if reasoning_chunks and on_text is None:
                             print(")", file=sys.stderr, flush=True)
-                    print(chunk, end="", flush=True)  # flush, or the terminal buffers it
+                    if on_text is None:
+                        print(chunk, end="", flush=True)
+                    else:
+                        on_text(chunk)
                     parts.append(chunk)
+            elif "contentBlockStop" in event:
+                index = event["contentBlockStop"]["contentBlockIndex"]
+                if index in tools:
+                    tools[index]["complete"] = True
             elif "messageStop" in event:
                 stop = event["messageStop"].get("stopReason")
             elif "metadata" in event:
                 usage = event["metadata"].get("usage", {})  # token counts arrive last
+                if on_usage is not None:
+                    on_usage(usage, first_token)
             else:
                 for key, val in event.items():
                     if key.endswith("Exception"):
                         raise DeskError(f"Stream error: {key}: {val.get('message', '')}")
     except (ClientError, ReadTimeoutError, ConnectTimeoutError, EndpointConnectionError) as exc:
         if not parts:
-            if reasoning_chunks:
+            if reasoning_chunks and on_text is None:
                 print(")", file=sys.stderr, flush=True)
             raise  # no answer text printed yet, so the caller may safely retry
         print()
         raise DeskError(f"Stream broke mid-reply: {_describe(exc)}") from exc
-    if reasoning_chunks and first_token is None:
+    if reasoning_chunks and first_token is None and on_text is None:
         print(")", file=sys.stderr, flush=True)  # thought but produced no answer text
-    print()
+    if tools or stop == "tool_use":
+        if stop != "tool_use" or not tools or not all(tool["complete"] for tool in tools.values()):
+            raise DeskError("The skill request was incomplete; no workflow was run. Please try again.")
+        parsed = []
+        for tool in tools.values():
+            try:
+                value = json.loads(tool["input"])
+                if not isinstance(value, dict) or not tool.get("name") or not tool.get("toolUseId"):
+                    raise ValueError("Invalid tool arguments.")
+            except (ValueError, TypeError) as exc:
+                raise DeskError("The model returned invalid skill arguments; no workflow was run.") from exc
+            parsed.append({"name": tool["name"], "toolUseId": tool["toolUseId"], "input": value})
+        tool_uses.extend(parsed)
+    if on_text is None:
+        print()
     return "".join(parts).strip(), usage, time.perf_counter() - start, first_token, stop
 
 
-def stream_model(client, model, messages, temperature, max_tokens, system_prompt):
+def stream_model(client, model, messages, temperature, max_tokens, system_prompt, *, tool_config=None, tool_uses=None, on_text=None):
     """Streaming Converse call with the same retry rules as call_model.
 
     Returns (text, usage, latency_s, first_token_s, attempts, stop_reason).
@@ -180,17 +225,36 @@ def stream_model(client, model, messages, temperature, max_tokens, system_prompt
         start = time.perf_counter()
         try:
             _simulate_failure()
+            observed = False
+            def observe_usage(usage, first_token):
+                nonlocal observed
+                observed = True
+                note_response(usage, started=start, first_token=first_token, attempts=attempt)
             resp = client.converse_stream(
                 modelId=model,
                 system=[{"text": system_prompt}],
                 messages=messages,
                 inferenceConfig=inference,
+                **({"toolConfig": tool_config} if tool_config is not None else {}),
             )
-            text, usage, latency, first_token, stop = _render_stream(resp["stream"], start)
+            try:
+                text, usage, latency, first_token, stop = _render_stream(resp["stream"], start, tool_uses=tool_uses,
+                    on_text=on_text, on_usage=observe_usage)
+            except DeskError:
+                if not observed:
+                    note_failure(attempt)
+                raise
+            finally:
+                close = getattr(resp["stream"], "close", None)
+                if close is not None:
+                    close()
+            if not observed:
+                note_response(usage, started=start, first_token=first_token, attempts=attempt)
             return text, usage, latency, first_token, attempt, stop
         except ClientError as exc:
             code = exc.response.get("Error", {}).get("Code", "")
             if code not in RETRYABLE_CODES:
+                note_failure(attempt)
                 raise DeskError(f"Request failed (not retryable): {_describe(exc)}") from exc
             last = exc
         except (ReadTimeoutError, ConnectTimeoutError, EndpointConnectionError) as exc:
@@ -204,6 +268,7 @@ def stream_model(client, model, messages, temperature, max_tokens, system_prompt
             )
             time.sleep(delay)
 
+    note_failure(MAX_ATTEMPTS)
     raise DeskError(
         f"Giving up after {MAX_ATTEMPTS} attempts. Last error: {_describe(last)}. "
         "Check your network and AWS credentials, or wait a minute if you are being rate limited."
@@ -250,6 +315,7 @@ def call_structured_model(client, model, messages, schema, max_tokens, system_pr
                     }},
                 }},
             )
+            note_response(response.get("usage", {}), started=start, attempts=attempt)
             return {
                 "raw_text": "".join(
                     block["text"] for block in response.get("output", {}).get("message", {}).get("content", [])
@@ -267,6 +333,7 @@ def call_structured_model(client, model, messages, schema, max_tokens, system_pr
                 exc, (ReadTimeoutError, ConnectTimeoutError, EndpointConnectionError)
             )
             if not retryable or attempt == MAX_ATTEMPTS:
+                note_failure(attempt)
                 category = "capability_error" if code in {"ValidationException", "ParamValidationError"} else "provider_error"
                 raise StructuredRequestError(
                     f"Native Bedrock request failed: {_describe(exc)}",

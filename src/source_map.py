@@ -4,6 +4,7 @@ import json
 import os
 import re
 import tempfile
+import time
 from pathlib import Path
 
 from model import DeskError
@@ -57,7 +58,16 @@ def _write_entries(path, entries):
             temporary = Path(handle.name)
             for entry in entries:
                 handle.write(json.dumps(entry, ensure_ascii=False, separators=(",", ":")) + "\n")
-        os.replace(temporary, path)
+        # Windows readers/scanners can briefly deny an otherwise valid replace.
+        # Retry only that condition; keep old data and propagate permanent errors.
+        for attempt in range(6):
+            try:
+                os.replace(temporary, path)
+                break
+            except PermissionError:
+                if attempt == 5:
+                    raise
+                time.sleep(0.05 * 2 ** attempt)
     finally:
         if temporary is not None:
             temporary.unlink(missing_ok=True)

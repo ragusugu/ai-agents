@@ -1,6 +1,7 @@
 """Seven-command chat menu, CLI option completion and terminal styling."""
 
 import argparse
+import re
 import sys
 from dataclasses import dataclass
 
@@ -15,6 +16,16 @@ CHAT_COMMANDS = {
     "save": ("Save this session", "<name>"),
     "structured-output": ("Extract emails into JSON", "<path> [options]"),
 }
+
+# A slash selector is a word of its own, rather than a path/URL separator.
+SLASH_TOKEN = re.compile(r"(?<![\w/\\:.])/(?P<name>[A-Za-z-]*)$")
+SLASH_SELECTION = re.compile(r"(?<![\w/\\:.])/(?P<name>[A-Za-z-]+)(?=\s|$)")
+
+
+def selected_command(text, commands):
+    """The last complete slash selection before the cursor, anywhere in text."""
+    return next((match for match in reversed(list(SLASH_SELECTION.finditer(text)))
+                 if match.group("name").lower() in commands), None)
 
 
 @dataclass
@@ -42,6 +53,15 @@ def command_catalog(parser):
 
 
 def print_command_menu(commands, prefix=""):
+    import presentation as ui
+    if ui.enabled():
+        from rich.table import Table
+        menu = Table.grid(padding=(0, 3))
+        for name, command in commands.items():
+            if name.startswith(prefix):
+                menu.add_row(ui.text("/" + name, style="bold #8fd4de"), ui.text(command.description))
+        ui.console().print(ui.card(menu, "Desk · Choose a shortcut"))
+        return
     print("\n  DESK / commands\n")
     for name, command in commands.items():
         if not name.startswith(prefix):
@@ -56,20 +76,26 @@ def create_completer(catalog_provider):
     class SlashCompleter(Completer):
         def get_completions(self, document, complete_event):
             text = document.text_before_cursor
-            if not text.startswith("/"):
-                return
             commands = catalog_provider()
-            if not any(c.isspace() for c in text):
+            active = SLASH_TOKEN.search(text)
+            if active is not None:
                 for name, command in commands.items():
-                    if name.startswith(text[1:].lower()):
-                        yield Completion("/" + name, start_position=-len(text),
+                    if name.startswith(active.group("name").lower()):
+                        yield Completion("/" + name, start_position=-len(active.group()),
                                          display_meta=command.description)
                 return
-            name = text.split()[0][1:].lower()
+            selected = selected_command(text, commands)
+            if selected is None:
+                return
+            name = selected.group("name").lower()
             command = commands.get(name)
             if command is None or command.parser is None:
                 return
             token = text.split()[-1] if not text[-1].isspace() else ""
+            # In prose, suggest options only after an explicit dash; do not
+            # open a flags menu while the user continues their sentence.
+            if selected.start() != 0 and not token.startswith("-"):
+                return
             options = {flag: action.help or "" for action in command.parser._actions for flag in action.option_strings}
             for child, parser in subcommands(command.parser).items():
                 options[child] = parser.description or "subcommand"
@@ -87,6 +113,7 @@ def create_prompt_session(catalog_provider, **kwargs):
 
     style = Style.from_dict({
         "prompt": "#7dd3fc bold",
+        "role": "#dbe4ee bold",
         "completion-menu": "bg:#1c222b #dbe4ee",
         "completion-menu.completion": "bg:#1c222b #dbe4ee",
         "completion-menu.completion.current": "bg:#173f50 #e0f2fe bold noreverse",
@@ -98,7 +125,8 @@ def create_prompt_session(catalog_provider, **kwargs):
     })
 
     def toolbar():
-        if get_app().current_buffer.text.startswith("/"):
+        text = get_app().current_buffer.document.text_before_cursor
+        if SLASH_TOKEN.search(text) or selected_command(text, catalog_provider()):
             return "  Arrows: select   Tab: complete   Enter: run   Esc: close"
         return ""
 
@@ -115,4 +143,4 @@ def chat_reader(catalog_provider):
         session = create_prompt_session(catalog_provider)
     except ImportError as exc:
         raise DeskError("Install requirements.txt to enable the interactive slash menu.") from exc
-    return lambda _message: session.prompt([("class:prompt", "> ")])
+    return lambda _message: session.prompt([("class:role", "You"), ("class:prompt", " › ")])

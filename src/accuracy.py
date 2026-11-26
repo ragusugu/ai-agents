@@ -14,7 +14,7 @@ from pydantic import Field, ValidationError, model_validator
 
 from extraction import OUTPUT_DIR, read_run_history, _write_record, extraction_fingerprint
 from model import DeskError
-from schemas import EmailRequest, ExtractionModel, Intent, LineItem, OrderRequest, RequestKind
+from schemas import ExtractionModel, Intent, LineItem, OrderRequest
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_LABELS = ROOT / "evaluation" / "challenge3_labels.draft.json"
@@ -24,20 +24,23 @@ class ExpectedItem(LineItem):
     description_terms: list[list[str]] = Field(default_factory=list)
 
 
-class ExpectedRequest(EmailRequest):
-    description_terms: list[list[str]] = Field(min_length=1)
-
-
 class ExpectedFields(ExtractionModel):
     customer: str | None
-    contact: str | None
     intent: Intent
-    primary_request_kind: RequestKind
     requested_date: date | None
     urgency: Literal["low", "normal", "high", "urgent"] | None
-    purchase_authorized: bool | None
     line_items: list[ExpectedItem]
-    requests: list[ExpectedRequest] = Field(min_length=1)
+
+    @model_validator(mode="before")
+    @classmethod
+    def read_legacy_label_subset(cls, value):
+        # Preserve earlier label files; only the requested output fields score.
+        if isinstance(value, dict):
+            value = {k: v for k, v in value.items() if k not in LEGACY_FIELDS}
+        return value
+
+
+LEGACY_FIELDS = {"contact", "primary_request_kind", "primary_request", "secondary_requests", "purchase_authorized", "requests"}
 
 
 class Source(ExtractionModel):
@@ -100,18 +103,14 @@ def load_labels(path=DEFAULT_LABELS, *, project_root=ROOT):
             if source.stem != label.source.id or hashlib.sha256(source.read_bytes()).hexdigest() != label.source.sha256:
                 raise ValueError("Label source ID/hash differs from the current email.")
             expected = label.expected
-            if expected.requests[0].kind != expected.primary_request_kind or expected.requests[0].intent != expected.intent:
-                raise ValueError("Label primary intent/kind disagrees with its first request.")
             # Validate the same local extraction policy; confidence is a placeholder,
             # never a ground-truth target or scored field.
             OrderRequest.model_validate_json(json.dumps({
-                **expected.model_dump(mode="json", exclude={"primary_request_kind", "requests", "line_items"}),
+                **expected.model_dump(mode="json", exclude={"line_items"}),
                 "confidence": 1.0,
-                "primary_request": expected.requests[0].model_dump(exclude={"description_terms"}),
-                "secondary_requests": [r.model_dump(exclude={"description_terms"}) for r in expected.requests[1:]],
                 "line_items": [item.model_dump(exclude={"description_terms"}) for item in expected.line_items],
             }))
-            for value in [*expected.line_items, *expected.requests]:
+            for value in expected.line_items:
                 if any(not group for group in value.description_terms):
                     raise ValueError("Description synonym groups cannot be empty.")
                 if isinstance(value, ExpectedItem) and value.sku is None and not value.description_terms:
@@ -199,15 +198,27 @@ def score_fields(expected, prediction):
     available = prediction is not None
     def add(field, correct):
         checks.append({"field": field, "correct": bool(available and correct), "covered": available})
-    for field in ("customer", "contact", "intent", "requested_date", "urgency", "purchase_authorized"):
+    for field in ("customer", "intent", "requested_date", "urgency"):
         add(field, available and _equal(getattr(expected, field), getattr(prediction, field), field))
-    add("primary_request.kind", available and expected.primary_request_kind == prediction.primary_request.kind)
     actual_items = prediction.line_items if available else []
     add("line_items.count", available and len(expected.line_items) == len(actual_items))
+    # Within equally plausible product identities, prefer matching field values.
+    # Repeated SKU lines can have distinct quantities/units; input order must not
+    # decide their scores. Identity weight preserves exact-SKU priority across
+    # the entire assignment before using field agreement as the tie-breaker.
+    identity_weight = 4 * (len(expected.line_items) + 1)
     def identity(e, p):
+        product_match = 0
         if e.sku is not None and p.sku is not None and _equal(e.sku, p.sku, "sku"):
-            return 2
-        return int(concepts_match(p.description, e.description_terms))
+            product_match = 2
+        elif concepts_match(p.description, e.description_terms):
+            product_match = 1
+        if not product_match:
+            return 0
+        agreement = sum(_equal(getattr(e, field), getattr(p, field), field)
+                        for field in ("sku", "quantity", "unit"))
+        agreement += int(concepts_match(p.description, e.description_terms))
+        return identity_weight * product_match + agreement
     items = _pairs(expected.line_items, actual_items, identity)
     for index, item in enumerate(expected.line_items):
         predicted = actual_items[items[index]] if index in items else None
@@ -217,13 +228,6 @@ def score_fields(expected, prediction):
             add("line_items.description", predicted is not None and concepts_match(predicted.description, item.description_terms))
     for _ in set(range(len(actual_items))) - set(items.values()):
         add("line_items.extra", False)
-    actual_requests = [prediction.primary_request, *prediction.secondary_requests] if available else []
-    matched = _pairs(expected.requests, actual_requests,
-                     lambda e, p: int(e.kind == p.kind and concepts_match(p.description, e.description_terms)))
-    for index in range(len(expected.requests)):
-        add("requests.present", index in matched)
-    for _ in set(range(len(actual_requests))) - set(matched.values()):
-        add("requests.extra", False)
     return checks
 
 
@@ -297,7 +301,10 @@ def accuracy_report(labels_path=DEFAULT_LABELS, *, results_path=None, model, pro
             status = "needs_review" if record.get("status") == "needs_review" else "invalid_output"
             if record.get("status") == "validated":
                 try:
-                    prediction = OrderRequest.model_validate_json(json.dumps(record.get("data")))
+                    payload = record.get("data")
+                    if allow_historical and fingerprint != extraction_fingerprint() and isinstance(payload, dict):
+                        payload = {k: v for k, v in payload.items() if k not in LEGACY_FIELDS}
+                    prediction = OrderRequest.model_validate_json(json.dumps(payload))
                     status = "validated"
                 except ValidationError:
                     pass
@@ -319,7 +326,7 @@ def accuracy_report(labels_path=DEFAULT_LABELS, *, results_path=None, model, pro
     for metric in metrics.values():
         metric["score"] = metric["correct"] / metric["total"] if coverage["validated"] else None
         metric["score_on_validated"] = metric["correct"] / metric["covered_total"] if metric["covered_total"] else None
-    report = {"report_version": 1, "model": model, "fingerprint": fingerprint,
+    report = {"report_version": 2, "model": model, "fingerprint": fingerprint,
               "current_fingerprint": extraction_fingerprint(), "output_dir": str(output),
               "selected_config": selected_config, "historical": fingerprint != extraction_fingerprint(),
               "labels_path": str(Path(labels_path).resolve()),
@@ -331,6 +338,7 @@ def accuracy_report(labels_path=DEFAULT_LABELS, *, results_path=None, model, pro
                           "score": correct / total if coverage["validated"] else None},
               "emails": details,
               "limitations": ["Confidence is not scored as accuracy.",
+                              "Only customer, intent, line items, requested date and urgency are scored; older label metadata is ignored.",
                               "Description checks use explicit concept/synonym groups, not full semantic equivalence.",
                               "Missing/review/invalid outputs remain in field denominators; no null-value credit.",
                               "One output directory and configuration are scored; historical selection is explicit.",
@@ -356,8 +364,8 @@ def write_label_review(labels_path=DEFAULT_LABELS, *, project_root=ROOT, destina
         expected = label.expected
         source = label_source(label, project_root).as_posix()
         lines += [f"## {label.source.id}", "", f"[Open source email](<{source}>)", "",
-                  f"Customer: {expected.customer}; contact: {expected.contact}.",
-                  f"Intent: {expected.intent}; primary: {expected.primary_request_kind}; purchase authorized: {expected.purchase_authorized}.",
+                  f"Customer: {expected.customer}.",
+                  f"Intent: {expected.intent}.",
                   f"Requested date: {expected.requested_date}; urgency: {expected.urgency}.", ""]
         if expected.line_items:
             lines += ["| SKU | Description | Quantity | Unit |", "| --- | --- | ---: | --- |"]
@@ -365,9 +373,6 @@ def write_label_review(labels_path=DEFAULT_LABELS, *, project_root=ROOT, destina
                 lines.append(f"| {item.sku or 'null'} | {item.description or 'not supplied'} | {item.quantity if item.quantity is not None else 'null'} | {item.unit or 'null'} |")
         else:
             lines.append("Line items: none identifiable from the email.")
-        lines += ["", "Requests:"]
-        for request in expected.requests:
-            lines.append(f"- {request.kind}: {request.description}")
         lines += ["", f"Ambiguity/review note: {label.notes}", "", "- [ ] Human checked against the source and corrected the draft JSON if needed.", ""]
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(lines), encoding="utf-8")

@@ -1,6 +1,7 @@
 """Skill workflow: selected emails -> extraction -> local field report."""
 
 import os
+import time
 from pathlib import Path
 
 from accuracy import DEFAULT_LABELS, ROOT, LabelSet, accuracy_report, label_source, load_labels, write_label_review
@@ -16,6 +17,7 @@ def run_workflow(source, model, *, max_tokens=4000, output_dir=None, labels_path
     Supplying a path to this workflow is an execution request. plan_only is the
     explicit offline option. An extractor can be injected for offline tests.
     """
+    started = time.perf_counter()
     plan_path, plan = create_plan(source, model, output_dir=output_dir,
                                   expected_count=expected_count, retry_review=retry_review,
                                   max_tokens=max_tokens)
@@ -47,6 +49,7 @@ def run_workflow(source, model, *, max_tokens=4000, output_dir=None, labels_path
               "manifest_path": None, "manifest": None, "report_path": None,
               "report": None, "review_path": None}
     if plan_only:
+        result["elapsed_s"] = round(time.perf_counter() - started, 3)
         return result
     manifest_path, manifest = execute_plan(plan_path, model, output_dir=output_dir,
         max_tokens=max_tokens, allow_provider_calls=True, progress=progress, extractor=extractor)
@@ -57,4 +60,5 @@ def run_workflow(source, model, *, max_tokens=4000, output_dir=None, labels_path
         result.update(report_path=report_path, report=report)
         if report["label_provenance"]["human_review"]["status"] != "approved":
             result["review_path"] = write_label_review(labels, project_root=project_root)
+    result["elapsed_s"] = round(time.perf_counter() - started, 3)
     return result

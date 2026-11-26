@@ -6,6 +6,7 @@ import re
 import time
 
 from model import DeskError
+from telemetry import sent_tokens as _sent_tokens
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SAVE_DIR = os.path.join(ROOT_DIR, "save")
@@ -52,15 +53,6 @@ def load_session(name):
     if not isinstance(data.get("messages"), list):
         raise DeskError(f"Session file {path} has no message list.")
     return data
-
-
-def _sent_tokens(usage):
-    """All input tokens the request carried. Bedrock reports cached prefix tokens separately."""
-    return (
-        usage.get("inputTokens", 0)
-        + usage.get("cacheReadInputTokens", 0)
-        + usage.get("cacheWriteInputTokens", 0)
-    )
 
 
 def _estimate_tokens(messages):

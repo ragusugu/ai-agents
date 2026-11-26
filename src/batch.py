@@ -4,16 +4,18 @@ import hashlib
 import json
 import os
 import re
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
 
 from pydantic import ValidationError
 
-from extraction import (OUTPUT_DIR, _read_email, read_run_history, _reserve_output,
+from extraction import (OUTPUT_DIR, SCHEMA_VERSION, _read_email, read_run_history, _reserve_output,
                         _write_record, append_result, extract_email, extraction_fingerprint, rebuild_outputs)
 from model import DeskError
 from schemas import OrderRequest
+from telemetry import combine_usage, record_usage
 
 
 def provider_target(model):
@@ -124,7 +126,7 @@ def create_plan(directory, model, *, output_dir=None, expected_count=None, retry
 
 
 def _review(source, model, fingerprint, reason, *, code, output, uncertain=False):
-    record = {"record_version": 1, "schema_version": 1, "run_id": uuid4().hex,
+    record = {"record_version": 1, "schema_version": SCHEMA_VERSION, "run_id": uuid4().hex,
               **fingerprint, "source": {"path": source["path"], "sha256": source["sha256"]},
               "model": model, "created_at": datetime.now(timezone.utc).isoformat(),
               "status": "needs_review", "reason": reason, "data": None, "attempts": [],
@@ -201,6 +203,9 @@ def execute_plan(plan_path, model, *, output_dir=None, extractor=None, allow_pro
     manifest = {"batch_id": plan["batch_id"], "plan_sha256": hashlib.sha256(Path(plan_path).read_bytes()).hexdigest(),
                 "target": plan["target"], "sources": [], "status": "running"}
     manifest_path = output / f"batch-run-{plan['batch_id']}-{uuid4().hex}.json"
+    started = time.perf_counter()
+    metrics = {"elapsed_s": 0.0, "usage": combine_usage(), "provider_attempts": 0}
+    manifest["metrics"] = metrics
     lock = output / ".batch.lock"
     locked = False
     blocked = None
@@ -234,6 +239,11 @@ def execute_plan(plan_path, model, *, output_dir=None, extractor=None, allow_pro
                 try:
                     _, record = extractor(source["path"], model, output_dir=output, max_tokens=plan["max_tokens"],
                                           expected_source_sha256=source["sha256"], expected_endpoint=plan["target"]["endpoint"])
+                except (DeskError, OSError):
+                    # Extraction persists provider/schema failures as reviews.
+                    # A raised local/storage error must stop paid requests and
+                    # preserve its pending journal for explicit offline recovery.
+                    raise
                 except Exception as exc:
                     record = _recover_failed_email(output, source, model, plan["fingerprint"], before_ids)
                     if record is None:
@@ -254,6 +264,10 @@ def execute_plan(plan_path, model, *, output_dir=None, extractor=None, allow_pro
                 }:
                     blocked = error_code or "CapabilityError"
             # Completion is emitted only AFTER both persisted outcome and manifest are verified.
+            if action != "reused":
+                metrics["usage"] = combine_usage(metrics["usage"], record_usage(record))
+                metrics["provider_attempts"] += record.get("transport_attempts") or 0
+            metrics["elapsed_s"] = round(time.perf_counter() - started, 3)
             _, outcomes = read_run_history(output)
             if not any(row["run_id"] == record["run_id"] and row["status"] == record["status"] for row in outcomes):
                 raise DeskError("Outcome was not persisted; refusing to publish completion.")
@@ -265,6 +279,7 @@ def execute_plan(plan_path, model, *, output_dir=None, extractor=None, allow_pro
             counts[bucket] += 1
             notify("email_complete", source_id=source["id"], action=action, status=record["status"])
         manifest["status"] = "complete" if all(e["status"] == "validated" for e in manifest["sources"]) else "complete_with_review"
+        metrics["elapsed_s"] = round(time.perf_counter() - started, 3)
         _write_record(manifest_path, manifest)
         notify("batch_complete", status=manifest["status"])
         return manifest_path, manifest
