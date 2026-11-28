@@ -27,9 +27,9 @@ class CompletionTests(unittest.TestCase):
     def complete(self, text, cursor=None):
         return list(self.completer.get_completions(Document(text, cursor_position=cursor), CompleteEvent(text_inserted=True)))
 
-    def test_slash_at_start_or_inside_sentence_shows_same_seven_commands(self):
+    def test_slash_at_start_or_inside_sentence_shows_same_eight_commands(self):
         expected = {"/" + name for name in self.commands}
-        self.assertEqual(len(expected), 7)
+        self.assertEqual(len(expected), 8)
         for text in ["/", "I need to structure my email by using /", "Please use (/", "Use\n/"]:
             with self.subTest(text=text):
                 self.assertEqual({c.text for c in self.complete(text)}, expected)

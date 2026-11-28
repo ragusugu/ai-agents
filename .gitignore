@@ -15,3 +15,7 @@ save/
 # Challenge 3 generated results and per-run evidence
 /output/
 destination/
+
+# Local policy index, downloaded embedding model and isolated ingest evidence
+.desk/
+/src/naive_rag/rag_db/

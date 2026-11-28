@@ -4,8 +4,8 @@ import os
 import time
 from pathlib import Path
 
-from accuracy import ROOT, LabelSet, accuracy_report, label_source, load_labels, write_label_review
-from batch import create_plan, execute_plan
+from challenge3_structured_output.accuracy import ROOT, LabelSet, accuracy_report, label_source, load_labels, write_label_review
+from challenge3_structured_output.batch import create_plan, execute_plan
 from model import DeskError
 
 
@@ -18,9 +18,13 @@ def run_workflow(source, model, *, max_tokens=4000, output_dir=None, labels_path
     explicit offline option. An extractor can be injected for offline tests.
     """
     started = time.perf_counter()
+    if progress is not None:
+        progress(dict(kind="planning", message="Reading email sources and checking reusable outcomes…"))
     plan_path, plan = create_plan(source, model, output_dir=output_dir,
                                   expected_count=expected_count, retry_review=retry_review,
                                   max_tokens=max_tokens)
+    if progress is not None:
+        progress(dict(kind="plan_ready", message=f"Plan ready: {plan['source_count']} emails; {plan['reused_count']} reusable"))
     labels = None
     note = "No labels supplied; extraction runs without a label comparison or accuracy claim."
     if labels_path is not None:
@@ -53,6 +57,8 @@ def run_workflow(source, model, *, max_tokens=4000, output_dir=None, labels_path
         max_tokens=max_tokens, allow_provider_calls=True, progress=progress, extractor=extractor)
     result.update(manifest_path=manifest_path, manifest=manifest)
     if labels is not None:
+        if progress is not None:
+            progress(dict(kind="evaluating", message="Calculating the local report for the supplied labels…"))
         report_path, report = accuracy_report(labels, model=model, project_root=project_root,
             output_dir=plan["output_dir"], require_reviewed=require_reviewed)
         result.update(report_path=report_path, report=report)

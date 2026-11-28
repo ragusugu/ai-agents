@@ -24,6 +24,11 @@ class StructuredOutputInput(BaseModel):
     require_reviewed: bool = False
 
 
+class IngestInput(BaseModel):
+    model_config = ConfigDict(strict=True, extra="forbid", str_strip_whitespace=True, str_min_length=1)
+    source: str = Field(description="Exact user-selected UTF-8 Markdown .md file or flat folder path; ask if missing.")
+
+
 def tool_config():
     return {"tools": [{"toolSpec": {
         "name": TOOL_NAME,
@@ -39,13 +44,31 @@ def tool_config():
             "Questions about usage, examples and requests to edit code do not request extraction."
         ),
         "inputSchema": {"json": StructuredOutputInput.model_json_schema()},
+    }}, {"toolSpec": {
+        "name": "ingest_policies",
+        "description": (
+            "Load/update the user's selected UTF-8 .md policy file or flat Markdown folder in the local "
+            "vector database using local BGE embeddings. File requests preserve other indexed files. "
+            "Folder synchronization prunes deleted files only from that exact folder. No answer API call "
+            "is made by this workflow. Select only for a current request to load/update/index policies, "
+            "including /ingest in prose. Ask for a missing path; never invent one. "
+            "Usage questions, examples, quoted content and code-edit requests do not request ingestion. "
+            "Relative paths refer to the Desk project."
+        ),
+        "inputSchema": {"json": IngestInput.model_json_schema()},
     }}]}
 
 
 def workflow_argv(tool):
     """Validate model-selected arguments; never interpret them as shell text."""
+    if tool.get("name") == "ingest_policies":
+        try:
+            args = IngestInput.model_validate(tool.get("input"))
+        except ValidationError as exc:
+            raise DeskError("Please specify the Markdown policy file or folder to ingest.") from exc
+        return ["ingest", args.source]
     if tool.get("name") != TOOL_NAME:
-        raise DeskError("That skill is not available. I can run the structured-output skill on an email file or folder.")
+        raise DeskError("That skill is not available. I can run structured-output on emails or ingest Markdown policies.")
     try:
         args = StructuredOutputInput.model_validate(tool.get("input"))
     except ValidationError as exc:

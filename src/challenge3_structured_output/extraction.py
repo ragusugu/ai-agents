@@ -15,10 +15,10 @@ from pydantic import ValidationError
 
 from model import DeskError, StructuredRequestError, call_structured_model, make_client
 from schemas import OrderRequest, bedrock_schema, SCHEMA_PATH
-from source_map import insert_entry, read_entries
-from grounding import verify_candidate, verifier_fingerprint
+from challenge3_structured_output.source_map import insert_entry, read_entries
+from challenge3_structured_output.grounding import verify_candidate, verifier_fingerprint
 
-OUTPUT_DIR = Path(__file__).resolve().parents[1] / "output"
+OUTPUT_DIR = Path(__file__).resolve().parents[2] / "output"
 MAX_REPAIRS = 2
 MAX_EMAIL_BYTES = 100_000
 SCHEMA_VERSION = 2
@@ -148,7 +148,7 @@ def _read_results(path):
         raise DeskError(f"Cannot read {path.name}: file is unreadable or contains an invalid JSON record.") from exc
 
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 
 
 def _source_ref(source):

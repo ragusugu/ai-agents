@@ -71,7 +71,7 @@ def _describe(exc):
     return f"{type(exc).__name__}: {exc}"
 
 
-def call_model(client, model, messages, temperature, max_tokens):
+def call_model(client, model, messages, temperature, max_tokens, system_prompt=SYSTEM_PROMPT):
     """One Converse call with retry. messages can be a question string or list of dicts."""
     if isinstance(messages, str):
         message_list = [{"role": "user", "content": [{"text": messages}]}]
@@ -89,7 +89,7 @@ def call_model(client, model, messages, temperature, max_tokens):
             _simulate_failure()
             resp = client.converse(
                 modelId=model,
-                system=[{"text": SYSTEM_PROMPT}],
+                system=[{"text": system_prompt}],
                 messages=message_list,
                 inferenceConfig=inference,
             )
@@ -165,11 +165,11 @@ def _render_stream(stream, start, *, tool_uses=None, on_text=None, on_usage=None
                         first_token = time.perf_counter() - start
                         if reasoning_chunks and on_text is None:
                             print(")", file=sys.stderr, flush=True)
+                    parts.append(chunk)
                     if on_text is None:
                         print(chunk, end="", flush=True)
                     else:
                         on_text(chunk)
-                    parts.append(chunk)
             elif "contentBlockStop" in event:
                 index = event["contentBlockStop"]["contentBlockIndex"]
                 if index in tools:
@@ -193,6 +193,10 @@ def _render_stream(stream, start, *, tool_uses=None, on_text=None, on_usage=None
         raise DeskError(f"Stream broke mid-reply: {_describe(exc)}") from exc
     if reasoning_chunks and first_token is None and on_text is None:
         print(")", file=sys.stderr, flush=True)  # thought but produced no answer text
+    if stop is None:
+        raise DeskError("Stream ended without a completion event; displayed draft is incomplete.")
+    if not {"inputTokens", "outputTokens"} <= usage.keys():
+        raise DeskError("Stream ended without reported token usage; displayed draft was not accepted.")
     if tools or stop == "tool_use":
         if stop != "tool_use" or not tools or not all(tool["complete"] for tool in tools.values()):
             raise DeskError("The skill request was incomplete; no workflow was run. Please try again.")
@@ -228,6 +232,8 @@ def stream_model(client, model, messages, temperature, max_tokens, system_prompt
             observed = False
             def observe_usage(usage, first_token):
                 nonlocal observed
+                if not {"inputTokens", "outputTokens"} <= usage.keys():
+                    return
                 observed = True
                 note_response(usage, started=start, first_token=first_token, attempts=attempt)
             resp = client.converse_stream(
@@ -240,7 +246,7 @@ def stream_model(client, model, messages, temperature, max_tokens, system_prompt
             try:
                 text, usage, latency, first_token, stop = _render_stream(resp["stream"], start, tool_uses=tool_uses,
                     on_text=on_text, on_usage=observe_usage)
-            except DeskError:
+            except (DeskError, KeyboardInterrupt):
                 if not observed:
                     note_failure(attempt)
                 raise

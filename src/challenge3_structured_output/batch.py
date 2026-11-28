@@ -11,7 +11,7 @@ from uuid import uuid4
 
 from pydantic import ValidationError
 
-from extraction import (OUTPUT_DIR, SCHEMA_VERSION, _read_email, read_run_history, _reserve_output,
+from challenge3_structured_output.extraction import (OUTPUT_DIR, SCHEMA_VERSION, _read_email, read_run_history, _reserve_output,
                         _write_record, append_result, extract_email, extraction_fingerprint, rebuild_outputs)
 from model import DeskError
 from schemas import OrderRequest
@@ -183,7 +183,7 @@ def _recover_failed_email(output, source, model, fingerprint, before_ids):
     for path in pending:
         value = json.loads(path.read_text(encoding="utf-8"))
         saved = value["source"]
-        source_path = (Path(__file__).resolve().parents[1] / saved["path"]).resolve()
+        source_path = (Path(__file__).resolve().parents[2] / saved["path"]).resolve()
         if str(source_path) != source["path"] or saved["sha256"] != source["sha256"]:
             raise DeskError("Another pending run exists; automatic batch recovery stopped.")
     if pending:
@@ -220,6 +220,7 @@ def execute_plan(plan_path, model, *, output_dir=None, extractor=None, allow_pro
         _write_record(manifest_path, manifest)
         for entry in plan["sources"]:
             source = entry["source"]
+            notify("email_started", source_id=source["id"], message=f"Processing email {source['id']}")
             _, rows = read_run_history(output)
             existing = reusable_record(rows, source, model, plan["fingerprint"])
             retry_selected_review = (existing and plan["retry_review"] and existing["status"] == "needs_review"
@@ -277,7 +278,12 @@ def execute_plan(plan_path, model, *, output_dir=None, extractor=None, allow_pro
             _write_record(manifest_path, manifest)
             bucket = "needs_review" if record["status"] == "needs_review" else "reused" if action == "reused" else "newly_validated"
             counts[bucket] += 1
-            notify("email_complete", source_id=source["id"], action=action, status=record["status"])
+            outcome = dict(email_id=source["id"], status=record["status"],
+                           result=record.get("data") if record["status"] == "validated" else None)
+            if record["status"] == "needs_review":
+                outcome["reason"] = record.get("reason")
+            notify("email_complete", source_id=source["id"], action=action, status=record["status"], outcome=outcome,
+                   message=f"{source['id']}: {record['status']} ({action})")
         manifest["status"] = "complete" if all(e["status"] == "validated" for e in manifest["sources"]) else "complete_with_review"
         metrics["elapsed_s"] = round(time.perf_counter() - started, 3)
         _write_record(manifest_path, manifest)

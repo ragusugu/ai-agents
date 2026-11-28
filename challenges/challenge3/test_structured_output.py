@@ -21,12 +21,12 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "src"))
 
-import accuracy
-import batch
+from challenge3_structured_output import accuracy
+from challenge3_structured_output import batch
 import chat_commands
 import desk
-import extraction
-import grounding
+from challenge3_structured_output import extraction
+from challenge3_structured_output import grounding
 import model
 from schemas import GroundingReport, OrderRequest, bedrock_schema
 
@@ -261,9 +261,9 @@ class OfflineTests(OfflineFixture, unittest.TestCase):
             desk.print_result_sample(manifest, output_dir=out)
         self.assertEqual(sum(line.startswith("{") for line in stream.getvalue().splitlines()), 15)
 
-    def test_seven_chat_commands_and_new_cli_selection(self):
+    def test_eight_chat_commands_and_new_cli_selection(self):
         parser = desk.build_parser()
-        self.assertEqual(set(chat_commands.command_catalog(parser)), {"ask", "chat", "reset", "exit", "load", "save", "structured-output"})
+        self.assertEqual(set(chat_commands.command_catalog(parser)), {"ask", "chat", "reset", "exit", "load", "save", "structured-output", "ingest"})
         args = parser.parse_args(["accuracy", "--output-dir", "somewhere", "--allow-historical", "--config", "abc"])
         self.assertEqual((args.output_dir, args.allow_historical, args.config), ("somewhere", True, "abc"))
 

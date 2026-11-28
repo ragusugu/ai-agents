@@ -29,6 +29,9 @@ from constants import (
     CHAT_SYSTEM_PROMPT,
     DEFAULT_CHAT_MAX_TOKENS,
     MAX_HISTORY_TOKENS,
+    RAG_REFUSAL,
+    RAG_SYSTEM_PROMPT,
+    SYSTEM_PROMPT,
 )
 from model import (
     DeskError,
@@ -100,28 +103,76 @@ def cmd_ask(args):
             "Please specify it in your .env file or pass --model."
         )
     max_tokens = int(os.environ.get("DESK_MAX_TOKENS", DEFAULT_CHAT_MAX_TOKENS))
-    client = make_client()
     question = " ".join(args.question) if isinstance(args.question, list) else args.question
-    with ui.assistant_stream():
-        text, usage, latency, attempts, stop = call_model(
-            client, model, question, args.temperature, max_tokens
-        )
-    if ui.enabled():
-        context = ui.current_conversation()
-        ui.answer(text or "I didn't receive a complete response. Please try again.",
-                  response_stats(usage, latency=latency, attempts=attempts,
-                                 state=context["state"] if context else None))
-    else:
-        print(text if text else "(model returned no text; try a larger DESK_MAX_TOKENS)")
-    if stop == "max_tokens":
-        print("\n[warning: output was cut off at max tokens]", file=sys.stderr)
+    chunks = []
+    rag_enabled = not getattr(args, "no_rag", False)
+    started = time.perf_counter()
+    first_token = None
+    if rag_enabled:
+        from naive_rag.retrieval import build_rag_prompt, chunk_records, retrieve_chunks, validate_citations
+        ui.progress_event(dict(kind="retrieval", message="Retrieving local policy context…"))
+        chunks = retrieve_chunks(question, db_dir=getattr(args, "db_dir", None))
+        if getattr(args, "debug", False):
+            ui.retrieved_chunks(chunks)
+    received = False
+    notice = "Streaming draft · citation format is checked when complete." if rag_enabled and chunks else None
+    if notice and not ui.enabled():
+        print(notice, flush=True)
+    with ui.assistant_stream(notice=notice) as display:
+        def emit(chunk):
+            nonlocal received
+            received = True
+            if display is not None:
+                display.write(chunk)
+            else:
+                print(chunk, end="", flush=True)
+        if rag_enabled and not chunks:
+            text, usage, attempts, stop = RAG_REFUSAL, {"inputTokens": 0, "outputTokens": 0}, 0, None
+            emit(text)
+            latency = time.perf_counter() - started
+        else:
+            client = make_client()
+            prompt = build_rag_prompt(question, chunks) if rag_enabled else question
+            try:
+                text, usage, latency, first_token, attempts, stop = stream_model(
+                    client, model, [{"role": "user", "content": [{"text": prompt}]}],
+                    args.temperature, max_tokens, RAG_SYSTEM_PROMPT if rag_enabled else SYSTEM_PROMPT,
+                    on_text=emit)
+                if not text:
+                    raise DeskError("The stream returned no answer text; no turn was saved.")
+                if stop != "end_turn":
+                    raise DeskError(f"Answer stopped with {stop}; displayed draft is incomplete and was not saved.")
+                if rag_enabled:
+                    try:
+                        text = validate_citations(text, chunks)
+                    except DeskError as exc:
+                        raise DeskError("Citation-format validation failed; the displayed draft is rejected and was not saved. " + str(exc)) from exc
+            except (DeskError, KeyboardInterrupt) as exc:
+                message = ("Request interrupted; displayed draft was not saved." if isinstance(exc, KeyboardInterrupt)
+                           else str(exc))
+                if "not saved" not in message:
+                    message += " Displayed draft was not saved."
+                if display is not None:
+                    display.failure_notice = message
+                elif received:
+                    print(flush=True)
+                raise DeskError(message) from exc
+            finally:
+                latency = time.perf_counter() - started
+        if display is not None:
+            context = ui.current_conversation()
+            display.stats = response_stats(usage, latency=latency, first_token=first_token, attempts=attempts,
+                                          state=context["state"] if context else None)
+        else:
+            print(flush=True)
     if not ui.enabled() and current_turn() is None:
         print(
             f"\n--\nmodel: {model} | in: {usage['inputTokens']} tok | out: {usage['outputTokens']} tok "
-            f"| latency: {latency:.2f}s | cost: {estimate_cost(usage)}"
+            f"| latency: {latency:.2f}s | first token: {first_token if first_token is not None else 'n/a'}s | cost: {estimate_cost(usage)}"
             + (f" | attempts: {attempts}" if attempts > 1 else "")
         )
-    return {"command": "ask", "question": question, "text": text, "usage": usage}
+    return {"command": "ask", "question": question, "text": text, "usage": usage,
+            "retrieved_chunks": chunk_records(chunks) if rag_enabled else []}
 
 
 def _session_history_limit(state):
@@ -151,7 +202,7 @@ def _record_session_turn(state, user_text, assistant_text, *, usage=None):
 
 
 def handle_command(line, state):
-    """Dispatch the seven supported chat commands. False exits chat."""
+    """Dispatch the eight supported chat commands. False exits chat."""
     from chat_commands import command_catalog, print_command_menu
     commands = command_catalog(build_parser())
     parts = line.split(maxsplit=1)
@@ -166,6 +217,7 @@ def handle_command(line, state):
         else:
             _chat_notice("I'm ready. Tell me what you need, or use /reset for a fresh conversation.")
     elif cmd == "/reset":
+        state.pop("ingest_source_pending", None)
         state["messages"].clear()
         state["total_in"] = state["total_out"] = 0
         _chat_notice("I've started a fresh conversation.", "[history cleared; the next message starts a fresh conversation]")
@@ -202,6 +254,18 @@ def handle_command(line, state):
         try:
             tokens = [token[1:-1] if len(token) >= 2 and token[0] == token[-1] and token[0] in "\"'"
                       else token for token in shlex.split(arg, posix=False)]
+            if cmd == "/ingest":
+                if not tokens:
+                    state["ingest_source_pending"] = True
+                    _chat_notice('Which Markdown policy file or folder should I ingest? Enter its path, or /exit to leave.')
+                    return True
+                state.pop("ingest_source_pending", None)
+                # A whole existing path may be pasted without quotes, including
+                # spaces. Paths combined with flags use the normal quoted form.
+                from naive_rag.local_embeddings import project_path
+                raw_path = arg.strip().strip('"\'')
+                if project_path(raw_path).exists():
+                    tokens = [raw_path]
             if cmd == "/structured-output":
                 if not tokens:
                     state["pending_user_input"] = line
@@ -227,6 +291,8 @@ def handle_command(line, state):
                     budget = max(_session_history_limit(state) * 2, 16000)
                     summary = _format_structured_session_note(result["workflow"], result["args"], max_chars=budget)
                     _record_session_turn(state, line, summary, usage=result.get("usage"))
+                elif result.get("command") == "ingest":
+                    _record_session_turn(state, line, result["text"])
         except ValueError as err:
             print(f"desk: {err}", file=sys.stderr)
         except SystemExit:
@@ -275,6 +341,10 @@ def cmd_chat(args):
 
         if not user_input:
             continue
+
+        if state.get("ingest_source_pending") and not user_input.startswith("/"):
+            # Guided input is a literal source path, not shell/model text.
+            user_input = "/ingest " + user_input
 
         with ui.turn_details(state, model):
             if user_input.lower() in ("exit", "quit"):
@@ -367,19 +437,21 @@ def _run_chat_skill(tool_uses, user_input, state, *, usage=None, routing=None):
     from skill_tools import workflow_argv
     try:
         if len(tool_uses) != 1:
-            raise DeskError("Please select one email file or folder per skill request.")
+            raise DeskError("Please select one source file or folder per skill request.")
         argv = workflow_argv(tool_uses[0])
-        argv.extend(["--model", state["model"]])
+        if argv[0] != "ingest":
+            argv.extend(["--model", state["model"]])
         if ui.enabled():
-            ui.message(f"I'll use Structured Output to check the emails in {argv[1]}.")
+            ui.message(f"I'll run {argv[0]} on {argv[1]}.")
         else:
-            print(f"Using structured-output on {argv[1]}.")
+            print(f"Using {argv[0]} on {argv[1]}.")
         with ui.conversation(state, user_input, routing or dict(usage=usage or {})):
             exit_code, result = _dispatch_cli(argv, raise_errors=True)
             if exit_code or not isinstance(result, dict):
-                raise DeskError("The structured-output workflow did not complete. Check the reported source or storage error before retrying.")
+                raise DeskError("The skill workflow did not complete. Check the reported source or storage error before retrying.")
             budget = max(_session_history_limit(state) * 2, 16000)
-            summary = _format_structured_session_note(result["workflow"], result["args"], max_chars=budget)
+            summary = (result["text"] if result.get("command") == "ingest" else
+                       _format_structured_session_note(result["workflow"], result["args"], max_chars=budget))
         usage = combine_usage(usage, result.get("usage"))
     except DeskError as exc:
         summary = str(exc)
@@ -391,7 +463,7 @@ def _run_chat_skill(tool_uses, user_input, state, *, usage=None, routing=None):
 
 
 def cmd_rebuild_output(args):
-    from extraction import rebuild_outputs
+    from challenge3_structured_output.extraction import rebuild_outputs
     rebuild_outputs()
     _chat_notice("I've recovered the saved output tracking. No model request was needed.",
                  "Recovered local output tracking; no model call was made.")
@@ -401,7 +473,7 @@ def _chat_notice(value, plain=None):
     if ui.enabled():
         ui.message(value)
     else:
-        print(plain if plain is not None else value)
+        print(plain if plain is not None else value, flush=True)
 
 
 def _batch_options(args):
@@ -420,11 +492,13 @@ def _batch_options(args):
 def _show_batch_progress(event):
     if event["kind"] == "email_complete":
         print(f"[{event['completed']}/{event['total']}] {event['source_id']}: {event['status']} ({event['action']})", flush=True)
+    else:
+        ui.progress_event(event)
 
 
 def _ordered_outcomes(manifest, *, output_dir=None):
     """Collect persisted outcomes in manifest order without altering tracking."""
-    from extraction import read_run_history
+    from challenge3_structured_output.extraction import read_run_history
     _, rows = read_run_history(output_dir)
     by_run = {row["run_id"]: row for row in rows}
     outcomes = []
@@ -439,13 +513,14 @@ def _ordered_outcomes(manifest, *, output_dir=None):
     return outcomes
 
 
-def print_result_sample(manifest, *, sample_size=DEFAULT_SAMPLE_SIZE, output_dir=None):
+def print_result_sample(manifest, *, sample_size=DEFAULT_SAMPLE_SIZE, output_dir=None, shown_ids=()):
     """Display a bounded sample without changing extraction or stored results."""
     outcomes = _ordered_outcomes(manifest, output_dir=output_dir)
     selected = outcomes[:sample_size]
     print(f"\nSample outputs: {len(selected)} of {len(outcomes)} processed emails")
     for value in selected:
-        print(json.dumps(value, ensure_ascii=False))
+        if value["email_id"] not in shown_ids:
+            print(json.dumps(value, ensure_ascii=False), flush=True)
 
 
 def _validation_summary(manifest):
@@ -540,7 +615,7 @@ def print_accuracy_report(path, report, *, show_results=False, output_dir=None,
                           field_level=False):
     if ui.enabled():
         if show_results:
-            from extraction import read_run_history
+            from challenge3_structured_output.extraction import read_run_history
             _, rows = read_run_history(output_dir)
             by_run = {row["run_id"]: row for row in rows}
             for email in report["emails"][:sample_size]:
@@ -571,7 +646,7 @@ def print_accuracy_report(path, report, *, show_results=False, output_dir=None,
           f"| missing: {coverage['missing']} | review: {coverage['needs_review']}")
     predictions = {}
     if show_results and include_emails:
-        from extraction import read_run_history
+        from challenge3_structured_output.extraction import read_run_history
         _, rows = read_run_history(output_dir)
         predictions = {row["run_id"]: row for row in rows}
     emails = report["emails"][:sample_size] if include_emails else []
@@ -597,18 +672,32 @@ def print_accuracy_report(path, report, *, show_results=False, output_dir=None,
 
 def cmd_structured_output(args):
     from schemas import SCHEMA_PATH
-    from structured_output import run_workflow
+    from challenge3_structured_output.structured_output import run_workflow
     model, max_tokens = _batch_options(args)
     if not ui.enabled():
-        print(f"Schema template: {SCHEMA_PATH}")
+        print(f"Schema template: {SCHEMA_PATH}", flush=True)
+    shown_ids = set()
     with ui.batch_progress() as progress:
+        def update(event):
+            if progress is not None:
+                progress(event)
+            else:
+                _show_batch_progress(event)
+            outcome = event.get("outcome")
+            if (outcome and not args.summary_only and len(shown_ids) < args.sample_size
+                    and outcome["email_id"] not in shown_ids):
+                if ui.enabled():
+                    ui.email_result(outcome)
+                else:
+                    print(json.dumps(outcome, ensure_ascii=False), flush=True)
+                shown_ids.add(outcome["email_id"])
         result = run_workflow(args.source, model, max_tokens=max_tokens, labels_path=args.labels,
             plan_only=args.plan_only, retry_review=args.retry_review, expected_count=args.expected_count,
-            require_reviewed=args.require_reviewed, progress=progress or _show_batch_progress, output_dir=args.output_dir)
+            require_reviewed=args.require_reviewed, progress=update, output_dir=args.output_dir)
     plan = result["plan"]
     if ui.enabled():
         outcomes = _ordered_outcomes(result["manifest"], output_dir=plan["output_dir"]) if result["manifest"] else []
-        ui.workflow_result(result, args, outcomes, _workflow_stats(result))
+        ui.workflow_result(result, args, outcomes, _workflow_stats(result), shown_ids=shown_ids)
         return {"command": "structured-output", "workflow": result, "args": args, "usage": workflow_usage(result)}
     print(f"Emails: {plan['source_count']} | reusable: {plan['reused_count']} | new requests: {plan['new_email_payloads']}")
     print(result["label_note"])
@@ -618,7 +707,7 @@ def cmd_structured_output(args):
     print(f"Batch: {result['manifest']['status']} | {result['manifest_path']}")
     print(f"Outputs: {plan['output_dir']}/results.jsonl and needs_review.jsonl (when needed)")
     if not args.summary_only:
-        print_result_sample(result["manifest"], sample_size=args.sample_size, output_dir=plan["output_dir"])
+        print_result_sample(result["manifest"], sample_size=args.sample_size, output_dir=plan["output_dir"], shown_ids=shown_ids)
     if result["review_path"]:
         print(f"Human label review: {result['review_path']}")
     print(_validation_summary(result["manifest"]))
@@ -633,7 +722,7 @@ def cmd_structured_output(args):
 
 
 def cmd_accuracy(args):
-    from accuracy import DEFAULT_LABELS, accuracy_report, write_label_review
+    from challenge3_structured_output.accuracy import DEFAULT_LABELS, accuracy_report, write_label_review
     started = time.perf_counter()
     model = args.model or os.environ.get("DESK_MODEL")
     if not model:
@@ -663,6 +752,22 @@ def _positive_count(value):
     return count
 
 
+def cmd_ingest(args):
+    from naive_rag.local_embeddings import DEFAULT_RAG_DB_DIR, configured_embeddings
+    from naive_rag.ingest import ingest_policies
+    source = args.source_option or args.source
+    if args.source_option and args.source:
+        raise DeskError("Provide the source either as a path or with --source, not both.")
+    if not source:
+        raise DeskError('Specify a Markdown policy path: desk ingest "path/to/policies" (or use /ingest in chat).')
+    embedder = configured_embeddings(model=args.embed_model, cache_dir=args.cache_dir,
+        threads=args.threads, batch_size=args.batch_size, offline=args.offline)
+    result = ingest_policies(source, db_dir=args.db_dir or os.environ.get("DESK_RAG_DB_DIR", DEFAULT_RAG_DB_DIR),
+        chunk_size=args.chunk_size, overlap=args.overlap, reset=args.reset, embedder=embedder, progress=ui.progress_event)
+    summary = ui.ingest_summary(result)
+    return dict(command="ingest", ingest=result, text=summary)
+
+
 def build_parser():
     """The CLI and chat suggestions share this command/option definition."""
     parser = argparse.ArgumentParser(prog="desk", description="Desk: Meridian Supply Co. assistant")
@@ -672,6 +777,9 @@ def build_parser():
     ask.add_argument("question", nargs="+")
     ask.add_argument("--model", help="override DESK_MODEL")
     ask.add_argument("--temperature", type=float, help="sampling temperature (e.g. 0 or 1)")
+    ask.add_argument("--debug", action="store_true", help="show retrieved chunks and cosine similarities")
+    ask.add_argument("--no-rag", action="store_true", help="use the existing direct model API without policy retrieval")
+    ask.add_argument("--db-dir", help="policy index directory (default: DESK_RAG_DB_DIR or src/naive_rag/rag_db)")
     # Also parsed directly for intermixed flags, bypassing the root subparser.
     ask.set_defaults(command="ask", func=cmd_ask)
 
@@ -679,6 +787,20 @@ def build_parser():
     chat.add_argument("--model", help="override DESK_MODEL")
     chat.add_argument("--temperature", type=float, help="sampling temperature (e.g. 0 or 1)")
     chat.set_defaults(func=cmd_chat)
+
+    ingest = sub.add_parser("ingest", help="load/update Markdown policies in the local vector database")
+    ingest.add_argument("source", nargs="?", help="UTF-8 .md file or flat policy folder")
+    ingest.add_argument("--source", dest="source_option", help="alternative source file/folder path")
+    ingest.add_argument("--db-dir", help="local index directory (default: DESK_RAG_DB_DIR or src/naive_rag/rag_db)")
+    ingest.add_argument("--chunk-size", type=_positive_count, default=500, help="content tokens per chunk (default: 500)")
+    ingest.add_argument("--overlap", type=int, default=50, help="overlap tokens (default: 50)")
+    ingest.add_argument("--embed-model", help="local model ID; currently BAAI/bge-small-en-v1.5")
+    ingest.add_argument("--cache-dir", help="local model cache directory")
+    ingest.add_argument("--threads", type=_positive_count, help="CPU threads (default: 2)")
+    ingest.add_argument("--batch-size", type=_positive_count, help="embedding batch size (default: 8)")
+    ingest.add_argument("--offline", action="store_true", help="require cached model artifacts; no model download")
+    ingest.add_argument("--reset", action="store_true", help="rebuild the entire Desk policy collection from this source")
+    ingest.set_defaults(func=cmd_ingest)
 
     recover = sub.add_parser("rebuild-output", help="recover interrupted local tracking without calling the model")
     recover.set_defaults(func=cmd_rebuild_output)
@@ -729,14 +851,16 @@ def _dispatch_cli(argv=None, *, raise_errors=False):
     if not getattr(args, "func", None):
         parser.print_help()
         return 0, None
-    details = ui.turn_details(model=getattr(args, "model", None) or os.environ.get("DESK_MODEL")) if args.command != "chat" else nullcontext()
+    details = ui.turn_details(model=getattr(args, "model", None) or os.environ.get("DESK_MODEL")) if args.command not in {"chat", "ingest"} else nullcontext()
     with details:
         try:
             result = args.func(args)
             if isinstance(result, dict) and current_turn() is not None:
                 current_turn().ensure_usage(result.get("usage"))
             return 0, result
-        except DeskError as exc:
+        except (DeskError, KeyboardInterrupt) as exc:
+            if isinstance(exc, KeyboardInterrupt):
+                exc = DeskError("Operation interrupted; no completion was recorded.")
             if raise_errors:
                 raise
             if ui.enabled():

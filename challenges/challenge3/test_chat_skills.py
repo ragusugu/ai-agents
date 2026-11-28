@@ -11,13 +11,13 @@ import time
 import unittest
 from unittest.mock import patch
 
-from test_structured_output import MODEL, OfflineFixture
-from test_challenge3_contract import expected_fields
+from challenges.challenge3.test_structured_output import MODEL, OfflineFixture
+from challenges.challenge3.test_challenge3_contract import expected_fields
 import chat_commands
 import desk
 import model
 import skill_tools
-import structured_output
+from challenge3_structured_output import structured_output
 
 
 class EventStream(list):
@@ -42,11 +42,11 @@ def tool_stream(args, *, stop="tool_use", name="structured_output", complete=Tru
     return EventStream(events)
 
 
-def text_stream(text):
+def text_stream(text, usage=None):
     return EventStream([
         {"contentBlockDelta": {"contentBlockIndex": 0, "delta": {"text": text}}},
         {"messageStop": {"stopReason": "end_turn"}},
-        {"metadata": {"usage": {"inputTokens": 4, "outputTokens": 2}}},
+        {"metadata": {"usage": usage or {"inputTokens": 4, "outputTokens": 2}}},
     ])
 
 

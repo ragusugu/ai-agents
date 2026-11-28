@@ -11,10 +11,10 @@ from unittest.mock import Mock, patch
 from rich.cells import cell_len
 from rich.console import Console
 
-from test_structured_output import EMAIL, MODEL, FakeClient, OfflineFixture, candidate, ledger, native_response
+from challenges.challenge3.test_structured_output import EMAIL, MODEL, FakeClient, OfflineFixture, candidate, ledger, native_response
 import desk
-import extraction
-import grounding
+from challenge3_structured_output import extraction
+from challenge3_structured_output import grounding
 import model
 import presentation as ui
 from telemetry import response_stats
@@ -72,7 +72,8 @@ class RenderTests(unittest.TestCase):
     def test_stream_callback_preserves_reply_without_raw_duplicate_prints(self):
         stream = [{"contentBlockDelta": {"delta": {"text": "Hello "}}},
                   {"contentBlockDelta": {"delta": {"text": "again"}}},
-                  {"messageStop": {"stopReason": "end_turn"}}]
+                  {"messageStop": {"stopReason": "end_turn"}},
+                  {"metadata": {"usage": {"inputTokens": 7, "outputTokens": 4}}}]
         chunks, output = [], io.StringIO()
         with contextlib.redirect_stdout(output):
             result = model._render_stream(stream, 0, on_text=chunks.append)
@@ -90,21 +91,22 @@ class RenderTests(unittest.TestCase):
 
 class UsageTests(OfflineFixture, unittest.TestCase):
     def test_ask_dispatch_accepts_flags_anywhere_and_reports_usage_once(self):
+        from challenges.challenge3.test_chat_skills import text_stream
         response = dict(output=dict(message=dict(content=[dict(text="Ask reply")])),
                         usage=dict(inputTokens=7, outputTokens=4), stopReason="end_turn")
-        options = ["--model", MODEL, "--temperature", "0.2"]
+        options = ["--model", MODEL, "--temperature", "0.2", "--no-rag"]
         for arguments in [options + ["Explain", "token", "totals"],
                           ["Explain", *options, "token", "totals"],
                           ["Explain", "token", "totals", *options]]:
             with self.subTest(arguments=arguments):
-                client = SimpleNamespace(converse=Mock(return_value=response))
+                client = SimpleNamespace(converse_stream=Mock(return_value={"stream": text_stream("Ask reply", response["usage"])}))
                 output = io.StringIO()
                 with patch.object(desk, "make_client", return_value=client), \
                      contextlib.redirect_stdout(output):
                     code, result = desk._dispatch_cli(["ask", *arguments])
                 self.assertEqual(code, 0)
                 self.assertEqual(result["question"], "Explain token totals")
-                request = client.converse.call_args.kwargs
+                request = client.converse_stream.call_args.kwargs
                 self.assertEqual(request["modelId"], MODEL)
                 self.assertEqual(request["inferenceConfig"]["temperature"], 0.2)
                 self.assertEqual(request["messages"][0]["content"], [dict(text="Explain token totals")])
@@ -113,25 +115,27 @@ class UsageTests(OfflineFixture, unittest.TestCase):
                 self.assertIn("input 7 tokens | output 4 tokens", output.getvalue())
 
     def test_chat_ask_override_preserves_default_history_and_counts_usage_once(self):
-        from test_chat_skills import text_stream
+        from challenges.challenge3.test_chat_skills import text_stream
         override = "override-test-model"
         requests = []
         def stream(**kwargs):
+            if kwargs["modelId"] == override:
+                return dict(stream=text_stream("Ask reply", dict(inputTokens=7, outputTokens=4)))
             requests.append(json.loads(json.dumps(kwargs)))
             return dict(stream=text_stream("You asked about token totals."))
         client = SimpleNamespace(converse=Mock(return_value=dict(
             output=dict(message=dict(content=[dict(text="Ask reply")])),
             usage=dict(inputTokens=7, outputTokens=4), stopReason="end_turn")),
-            converse_stream=stream)
-        command = f"/ask Explain --temperature 0.2 --model {override} token totals"
+            converse_stream=Mock(side_effect=stream))
+        command = f"/ask Explain --temperature 0.2 --model {override} --no-rag token totals"
         inputs = iter([command, "What did I ask?", "/exit"])
         output = io.StringIO()
         with patch.object(desk, "make_client", return_value=client), \
              patch("chat_commands.chat_reader", return_value=lambda _: next(inputs)), \
              contextlib.redirect_stdout(output):
             self.assertEqual(desk.main(["chat", "--model", MODEL]), 0)
-        self.assertEqual(client.converse.call_count, 1)
-        self.assertEqual(client.converse.call_args.kwargs["modelId"], override)
+        self.assertEqual(client.converse_stream.call_count, 2)
+        self.assertEqual(client.converse_stream.call_args_list[0].kwargs["modelId"], override)
         self.assertEqual(len(requests), 1)
         self.assertEqual(requests[0]["modelId"], MODEL)
         self.assertEqual(requests[0]["messages"], [
@@ -218,7 +222,7 @@ class UsageTests(OfflineFixture, unittest.TestCase):
         self.assertIn("input 7 tokens", output.getvalue())
 
     def test_malformed_tool_keeps_reported_usage_even_when_execution_is_rejected(self):
-        from test_chat_skills import tool_stream
+        from challenges.challenge3.test_chat_skills import tool_stream
         client = SimpleNamespace(converse_stream=lambda **kw: dict(stream=tool_stream("{")))
         state = dict(model=MODEL, messages=[], total_in=0, total_out=0, history_limit=64000)
         output = io.StringIO()

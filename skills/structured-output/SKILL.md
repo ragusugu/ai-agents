@@ -135,7 +135,7 @@ selection is a chat request; per-email extraction and verification remain isolat
 The real results and final accuracy summary are retained in conversation history
 for follow-up questions and `/save`/`/load`.
 Type `/` or a prefix such as `/s` at any word position in the message to open
-and filter the same seven-command menu. Selecting a skill replaces only the
+and filter the same eight-command menu. Selecting a skill replaces only the
 slash token at the cursor, preserving the surrounding sentence. For example:
 "I need to structure my email by using /structured-output on data/emails and
 save the results in output." Path/URL separator slashes are not menu triggers.
@@ -149,10 +149,10 @@ command and records its summary/results into the active chat session memory
 (while keeping each email extraction request isolated on Bedrock). Type `/` for the compact
 dark suggestions menu; arrows/Tab select a command. `/structured-output ... --`
 suggests its flags; `/structured-output --help` lists every option. The only
-chat commands are `/ask`, `/chat`, `/reset`, `/exit`, `/load`, `/save` and
-`/structured-output`. Run the standalone accuracy command from PowerShell.
+chat commands are `/ask`, `/chat`, `/reset`, `/exit`, `/load`, `/save`,
+`/structured-output` and `/ingest`. Run the standalone accuracy command from PowerShell.
 
-The chat command runs `src/structured_output.py`, which reads the schema from
+The chat command runs `src/challenge3_structured_output/structured_output.py`, which reads the schema from
 this skill folder. Natural-language routing exposes this workflow as a tool;
-the seven slash shortcuts remain unchanged. Other repo skills and maintenance CLI commands do not appear
+the eight slash shortcuts include the user-requested policy `/ingest` skill. Other repo skills and maintenance CLI commands do not appear
 in chat suggestions.

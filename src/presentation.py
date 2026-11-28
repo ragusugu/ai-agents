@@ -107,6 +107,37 @@ def message(value, *, title="Desk", error=False, markdown=False):
                          border="#b78b5d" if error else "#3f6b76"))
 
 
+def ingest_summary(result):
+    summary = (f"Policy ingest complete: {result['files_total']} selected files | "
+               f"updated {result['files_updated']} | unchanged {result['files_unchanged']} | "
+               f"removed {result['files_removed']}\n"
+               f"Index: {result['indexed_files_total']} files | {result['chunks_total']} chunks | "
+               f"embedded {result['embedded_chunks']} | removed chunks {result['chunks_removed']}\n"
+               f"Local CPU model: {result['embed_model']} | elapsed {result['latency_s']:.2f}s\n"
+               f"Source: {result['source']}\nVector DB: {result['db_dir']}")
+    if enabled():
+        message(summary, title="Desk · Policy ingest")
+    else:
+        print(summary, flush=True)
+    return summary
+
+
+def retrieved_chunks(chunks):
+    """Debug evidence, with literal source IDs and scores in both terminal modes."""
+    if enabled():
+        table = Table(header_style="#94a3b8", border_style="#334155")
+        table.add_column("Chunk")
+        table.add_column("Cosine similarity", justify="right")
+        table.add_column("Chunk text")
+        for chunk in chunks:
+            table.add_row(text(chunk.chunk_id), text(f"{chunk.score:.4f}"), text(chunk.text))
+        console().print(card(table, f"Retrieved {len(chunks)} chunks · scores are not confidence"))
+    else:
+        print(f"Retrieved {len(chunks)} chunks (cosine similarity, not confidence)")
+        for chunk in chunks:
+            print(f"[{chunk.chunk_id}] score={chunk.score:.4f}\n{chunk.text}\n", flush=True)
+
+
 def duration(value):
     if value is None:
         return "—"
@@ -157,36 +188,58 @@ def answer(value, stats=None):
 
 
 class AssistantStream:
-    def __init__(self, output):
+    def __init__(self, output, notice=None):
         self.output, self.parts, self.stats, self.discard = output, [], None, False
+        self.notice, self.failure_notice = notice, None
+        self.incremental_text = not output.is_interactive or output.is_dumb_terminal
+
+    def frame(self, value):
+        body = Group(text(self.notice, style="#94a3b8"), Markdown(value)) if self.notice else Markdown(value)
+        return card(body, "Desk · streaming draft" if self.notice else "Desk")
 
     def write(self, chunk):
         self.parts.append(chunk)
-        self.live.update(card(Markdown("".join(self.parts))))
+        if self.incremental_text:
+            self.output.print(text(chunk), end="", soft_wrap=True)
+        else:
+            self.live.update(self.frame("".join(self.parts)), refresh=True)
 
     def __enter__(self):
-        self.live = Live(card(Text("Thinking…", style="#94a3b8")), console=self.output,
+        if self.incremental_text:
+            if self.notice:
+                self.output.print(text(self.notice, style="#94a3b8"))
+            return self
+        self.live = Live(self.frame("Thinking…"), console=self.output,
                          refresh_per_second=8, transient=True)
         self.live.start()
         return self
 
     def __exit__(self, exc_type, exc, tb):
+        if self.incremental_text:
+            if self.parts:
+                self.output.print()
+            if exc_type and self.parts and not self.discard:
+                self.output.print(card(text(self.failure_notice or "Response interrupted; draft not saved.", style="#e8be83"),
+                                       "Desk · unaccepted draft", border="#b78b5d"))
+            elif not self.discard and self.stats and current_turn() is None:
+                self.output.print(metric_lines(self.stats))
+            return
         self.live.stop()
         if self.parts and not self.discard:
             value = "".join(self.parts)
             if exc_type:
-                self.output.print(card(Group(Markdown(value), text("Response interrupted.", style="#e8be83")),
-                                       "Desk · interrupted", border="#b78b5d"))
+                self.output.print(card(Group(Markdown(value), text(self.failure_notice or "Response interrupted; draft not saved.", style="#e8be83")),
+                                       "Desk · unaccepted draft", border="#b78b5d"))
             else:
                 answer(value, self.stats)
 
 
 @contextmanager
-def assistant_stream():
+def assistant_stream(*, notice=None):
     if not enabled():
         yield None
         return
-    with use_console(console()), AssistantStream(console()) as stream:
+    with use_console(console()), AssistantStream(console(), notice=notice) as stream:
         yield stream
 
 
@@ -196,6 +249,9 @@ def batch_progress():
         yield None
         return
     output = console()
+    if not output.is_interactive or output.is_dumb_terminal:
+        yield progress_event
+        return
     with use_console(output), Progress(SpinnerColumn(style="#8fd4de"), TextColumn("{task.description}"),
         BarColumn(bar_width=None, complete_style="#619d99"), TaskProgressColumn(), TimeElapsedColumn(),
         console=output, transient=True) as progress:
@@ -205,8 +261,21 @@ def batch_progress():
                 counts = event["counts"]
                 valid = counts["reused"] + counts["newly_validated"]
                 progress.update(task, total=event["total"], completed=event["completed"],
-                    description=f"Checking emails · {valid} ready · {counts['needs_review']} need review")
+                    description=f"Checking emails · {valid} ready · {counts['needs_review']} need review", refresh=True)
+            elif event.get("message"):
+                progress.update(task, description=event["message"], refresh=True)
         yield update
+
+
+def progress_event(event):
+    """Show a real phase/batch event immediately; no invented percentages."""
+    message = event.get("message")
+    if not message:
+        return
+    if enabled():
+        console().print(text(message, style="#94a3b8"))
+    else:
+        print(f"[{event['kind']}] {message}", flush=True)
 
 
 def email_result(value):
@@ -267,7 +336,7 @@ def score_panel(report, *, manifest=None, stats=None):
     console().print(card(Group(*body), "Desk · Results"))
 
 
-def workflow_result(result, args, outcomes, stats):
+def workflow_result(result, args, outcomes, stats, *, shown_ids=()):
     plan = result["plan"]
     if args.plan_only:
         message(f"I found {plan['source_count']} emails. {plan['reused_count']} saved outcomes can be reused; "
@@ -276,7 +345,7 @@ def workflow_result(result, args, outcomes, stats):
         if current_turn() is None:
             console().print(metric_lines(stats))
         return
-    shown = [] if args.summary_only else outcomes[:args.sample_size]
+    shown = [] if args.summary_only else [row for row in outcomes[:args.sample_size] if row["email_id"] not in shown_ids]
     if shown:
         console().print(text(f"Showing {len(shown)} of {len(outcomes)} email outcomes", style="#94a3b8"))
         for value in shown:

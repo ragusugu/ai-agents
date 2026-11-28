@@ -10,18 +10,18 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from test_structured_output import (
+from challenges.challenge3.test_structured_output import (
     EMAIL, MODEL, FakeClient, OfflineFixture, candidate, ledger, native_response,
 )
 
-import accuracy
-import batch
-import extraction
-import grounding
+from challenge3_structured_output import accuracy
+from challenge3_structured_output import batch
+from challenge3_structured_output import extraction
+from challenge3_structured_output import grounding
 import model
 import desk
-import source_map
-import structured_output
+from challenge3_structured_output import source_map
+from challenge3_structured_output import structured_output
 from botocore.exceptions import ClientError
 from pydantic import ValidationError
 from schemas import OrderRequest, bedrock_schema

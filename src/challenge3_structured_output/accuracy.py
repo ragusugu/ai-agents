@@ -12,11 +12,11 @@ from typing import Literal, Self
 
 from pydantic import Field, ValidationError, model_validator
 
-from extraction import OUTPUT_DIR, read_run_history, _write_record, extraction_fingerprint
+from challenge3_structured_output.extraction import OUTPUT_DIR, read_run_history, _write_record, extraction_fingerprint
 from model import DeskError
 from schemas import ExtractionModel, Intent, LineItem, OrderRequest
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_LABELS = ROOT / "evaluation" / "challenge3_labels.draft.json"
 
 

@@ -1,4 +1,4 @@
-"""Seven-command chat menu, CLI option completion and terminal styling."""
+"""Eight-command chat menu, CLI option completion and terminal styling."""
 
 import argparse
 import re
@@ -15,6 +15,7 @@ CHAT_COMMANDS = {
     "load": ("Open a saved session", "<name>"),
     "save": ("Save this session", "<name>"),
     "structured-output": ("Extract emails into JSON", "<path> [options]"),
+    "ingest": ("Index policy documents", "<path> [options]"),
 }
 
 # A slash selector is a word of its own, rather than a path/URL separator.
@@ -43,11 +44,11 @@ def subcommands(parser):
 
 
 def command_catalog(parser):
-    """Expose the seven chat commands; retain CLI parsers for option completion."""
+    """Expose the eight chat commands; retain CLI parsers for option completion."""
     cli = subcommands(parser)
     commands = {name: ChatCommand(name, description, usage,
-                                  cli.get(name) if name in {"ask", "structured-output"} else None,
-                                  name if name in {"ask", "structured-output"} else None)
+                                  cli.get(name) if name in {"ask", "structured-output", "ingest"} else None,
+                                  name if name in {"ask", "structured-output", "ingest"} else None)
                 for name, (description, usage) in CHAT_COMMANDS.items()}
     return commands
 
@@ -67,7 +68,7 @@ def print_command_menu(commands, prefix=""):
         if not name.startswith(prefix):
             continue
         print(f"  {'/' + name:<22} {command.description}")
-    print("\n  /save <name>  /load <name>  /structured-output <path>\n")
+    print("\n  /save <name>  /load <name>  /structured-output <path>  /ingest <path>\n")
 
 
 def create_completer(catalog_provider):

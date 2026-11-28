@@ -1,108 +1,237 @@
-# BREAK IT — live Desk demo
+# BREAK IT — Challenge 4 Naive RAG
 
-Run: **28 November 2026, 15:10:13–15:11:58 IST**
+Run: **28 November 2026, 18:32:00–18:33:29 IST**. Existing answer model: `global.anthropic.claude-sonnet-5-5`.
 
-Configured model: `global.anthropic.claude-sonnet-5-5` on Amazon Bedrock.
+[challenge4.md](challenges/challenge4/challenge4.md) owns Build/Done When/Stretch, stages and demos. This notebook records every original Break It experiment, expected versus actual results and learning observations. API answers below are actual captures; the retrieval baseline used genuine local BGE embeddings and the persisted policy index. Sources were unchanged.
 
-**Observed result:** neither requested failure was reproduced in this run. Desk left every unknown product SKU as `null`, and the policy answer explicitly declined to guess. The policy answer supplied no citations and did not retrieve the available policy documents.
+## 1. Exact SKU: MS-VLV-0200
 
-## How the demo was run
-
-Reviewed all **30** files in `data/emails`. Selected every email that describes an identifiable product without supplying a product SKU: **EM-001, EM-004, EM-008 and EM-023**. Order references such as `MS-10042` were not treated as product SKUs. Other emails either provide a literal product SKU or do not identify a product.
-
-Copied these four fixture emails unchanged into a separate demo folder; the local audit verified that each original and copy have identical bytes and SHA-256 hashes. Ran the actual `src/desk.py chat` CLI with redirected input, using `/structured-output` and the stored schema. This was a fresh live run: **4 new email extractions, 0 reused outcomes, 4 validated, 0 needing review**. All four selected emails were processed and displayed. No labels were supplied or automatically evaluated.
-
-The chat commands were:
+Question:
 
 ```text
-/structured-output "output/break-it-20261128-151013/emails" --output-dir "output/break-it-20261128-151013/extraction"
-/reset
-What is Meridian Supply Co.'s return policy for an unopened, unused stock valve ordered on October 15, 2025 and delivered 35 calendar days before the return request? Can the customer return it, and what restocking fee applies?
-/save break-it-20261128-151013
-/exit
+What are the specifications and stock availability of SKU MS-VLV-0200?
 ```
 
-The actual invocation used the equivalent absolute paths, recorded in [chat-input.txt](output/break-it-20261128-151013/chat-input.txt). `/reset` cleared the extraction conversation before the policy question. The saved policy session contains exactly one user question and one assistant response. Application code, prompts and source fixtures were not changed for this demo.
+Actual answer:
 
-## Product descriptions and catalog check
-
-Compared each non-null `line_items[].sku` in the fresh persisted outputs with the exact `sku` values in [catalog.csv](data/catalog.csv), using Python's CSV reader and set membership. The catalog contains **200 rows and 200 unique SKUs**. `null` means no SKU was filled; it is not a nonexistent SKU.
-
-| Email | Product description in the original email | SKU returned | Catalog check | Extraction confidence |
-| --- | --- | --- | --- | ---: |
-| [EM-001](data/emails/EM-001.txt) | “half-inch brass shutoff valves, female pipe thread” | `null` | No SKU to check | 0.72 |
-| [EM-004](data/emails/EM-004.txt) | “blue thread sealing paste again, medium cartridge i think” | `null` | No SKU to check | 0.80 |
-| [EM-008](data/emails/EM-008.txt), item 1 | “large nitrile work gloves” | `null` | No SKU to check | 0.80 |
-| EM-008, item 2 | “impact goggles” | `null` | No SKU to check | 0.80 |
-| [EM-023](data/emails/EM-023.txt) | “one unopened half-inch brass valve” | `null` | No SKU to check | 0.90 |
-
-Counts:
-
-- Emails tested: **4**; extracted product lines: **5**.
-- Filled, non-null SKU occurrences: **0**.
-- Unknown SKU fields left `null`: **5**.
-- Filled SKUs that do not exist in the catalog: **0 occurrences, 0 unique SKUs**.
-- Filled SKUs inferred without appearing in their own source email: **0**.
-
-This is **not a 100% catalog-matching result**: there were zero filled SKUs to evaluate. Desk preserved descriptions without resolving them to catalog products. The confidence values describe the overall extraction; they do not demonstrate SKU identification or factual accuracy.
-
-The existing extraction prompt in [src/extraction.py](src/extraction.py) explicitly requires an unknown SKU to remain null and any supplied SKU to appear literally in its own email. Its source verifier in [src/grounding.py](src/grounding.py) checks against that email. Neither request receives the catalog for product resolution. This explains the intended behavior; one successful demo does not establish that every future response will obey it.
-
-### Actual structured responses
-
-These are the complete final payloads emitted by Desk, with JSON whitespace compacted for this note:
-
-```json
-{"email_id":"EM-001","status":"validated","result":{"customer":"Alder Fabrication LLC","intent":"status","line_items":[{"sku":null,"description":"half-inch brass shutoff valves, female pipe thread (like those used on the rinse line); SKU unknown","quantity":12,"unit":null}],"requested_date":null,"urgency":null,"confidence":0.72}}
-{"email_id":"EM-004","status":"validated","result":{"customer":"Beacon Water Systems LLC","intent":"other","line_items":[{"sku":null,"description":"Blue thread sealing paste, medium cartridge (uncertain); tentative quantity maybe 6, exact quantity to be confirmed after product identification","quantity":null,"unit":null}],"requested_date":null,"urgency":null,"confidence":0.8}}
-{"email_id":"EM-008","status":"validated","result":{"customer":"Evercrest Plant Services LLC","intent":"other","line_items":[{"sku":null,"description":"large nitrile work gloves for the packing bench (quote requested; ten selling units if sold singly)","quantity":10,"unit":"selling units"},{"sku":null,"description":"impact goggles (maybe four, as a separate quote line; not the full face shields)","quantity":null,"unit":null}],"requested_date":null,"urgency":null,"confidence":0.8}}
-{"email_id":"EM-023","status":"validated","result":{"customer":"Oakridge Water Systems LLC","intent":"return","line_items":[{"sku":null,"description":"half-inch brass valve, unopened, one unit left from order MS-10042","quantity":1,"unit":"unit"}],"requested_date":null,"urgency":null,"confidence":0.9}}
+```text
+not in the documents
 ```
 
-Desk reported `Accuracy: unmeasured (no matching labels available).` Its validation result is not a human-reviewed accuracy measurement. The extraction turn took about **97.3 seconds**, as recorded in the transcript.
+**Expected/observed:** the index covers policies, not the catalog; no policy contains this exact SKU. Dense retrieval still returned approximate policy matches, but the API refused to invent specifications/stock. Refusal PASS for this run; exact-SKU lookup itself is not demonstrated.
 
-## Policy question in fresh chat
+Retrieved IDs: `bulk-pricing.md#1`, `warranty.md#1`, `damaged-goods.md#1`, `price-adjustments-and-refunds.md#1`. Capture: [exact-sku.txt](.desk/challenge4-verification/20261128T130200Z/exact-sku.txt).
 
-**Question:**
+## 2. Answer inside a Markdown table
 
-> What is Meridian Supply Co.'s return policy for an unopened, unused stock valve ordered on October 15, 2025 and delivered 35 calendar days before the return request? Can the customer return it, and what restocking fee applies?
+Question:
 
-**Actual Desk response, verbatim:**
+```text
+What bulk discount applies to 250 selling units of one SKU?
+```
 
-> I don't have Meridian's return policy, so I can't say whether this valve can be returned or what restocking fee applies. I won't guess at a return window, fee percentage or eligibility rule.
->
-> The 35 days since delivery may matter, but I can't tell whether it falls inside the window without the policy. The October 15, 2025 order date may also matter, depending on how the policy is written.
->
-> To get a firm answer, you could:
-> - **Check the written returns policy.** The customer's terms of sale or the internal policy documentation should have it.
-> - **Ask Customer Service or Sales Ops.** They can confirm eligibility and the fee.
-> - **Ask about stock valves specifically.** Some policies treat standard stock items differently from special-order or custom items, so confirm which category this valve is in.
->
-> If you send me the policy text, I can work through this case with you. I can also help draft a message to the customer or to the team that owns returns.
+Actual answer:
 
-### Confidence and sourcing assessment
+```text
+A quantity of 250 selling units of one SKU falls in the 200-499 tier, which has a 10% base discount [bulk-pricing.md#1]. The discount applies per order line, using the quantity of that SKU in its selling unit [bulk-pricing.md#1].
+```
 
-- **Confidence:** cautious about the business facts. Desk says it cannot determine eligibility, the return window or the fee. It provides no numeric confidence score for this chat answer. The anticipated confidently invented policy answer did not occur.
-- **Sources:** zero citations, policy IDs, versions, effective dates or document links. The general comment about what “some policies” do is unsourced and does not establish Meridian's actual rule.
-- **Retrieval:** no policy text was supplied in this fresh chat. The chat tool catalog in [src/skill_tools.py](src/skill_tools.py) exposes structured extraction, with no policy-document retrieval tool. The application does not inject these local policy files into the policy-question request. Files existing on disk do not mean the model has read them.
-- **Practical gap:** Desk avoided making up a policy, but it could not answer a question that the local policy collection can resolve.
-- **Timing:** policy response latency **3.81 seconds**, first token **1.39 seconds**; reported usage **1,900 input tokens** (rounded in terminal), **294 output tokens**. The raw saved session retains the exact session totals.
+**Expected:** 250 selling units falls in the 200–499 tier, giving a 10% per-line base discount. **Observed:** correct tier/value and `bulk-pricing.md#1` citation. PASS. Original Markdown table text reached the context; this example does not establish success for every table/window boundary.
 
-### What the local source actually says
+## 3. Two policy versions disagree
 
-This comparison was performed outside Desk after reading the local documents; it was **not part of the model's answer**.
+Question:
 
-[Returns Policy Update — POL-011, version 2.0, effective 2025-10-01](data/policies/returns-2025-10.md) applies to orders placed on or after October 1, 2025. It gives unopened, unused stock products a **45-calendar-day** return-request window after delivery and a **10%** discretionary restocking fee on the net merchandise value paid after the original bulk discount. A request on day 35 is inside that window and qualifies for eligibility review; inspection, approval and other exclusions still apply. It is not an unconditional refund promise.
+```text
+How do the January and October 2025 returns policies differ in return window and restocking fee?
+```
 
-The earlier [Returns Policy — POL-001, version 1.0, effective 2025-01-01](data/policies/returns-2025-01.md) has a **30-day** window and **15%** fee for orders placed January through September 2025. It does not govern the hypothetical October 15 order.
+Actual answer:
 
-## Evidence and limits
+```text
+**Return window**
+- The January policy (Returns Policy, POL-001, v1.0, effective 2025-01-01) allows returns within 30 calendar days after delivery. It applies to orders placed January 1 through September 30, 2025 [returns-2025-01.md#1].
+- The October policy (Returns Policy Update, POL-011, v2.0, effective 2025-10-01) allows returns within 45 calendar days after delivery. It applies to orders placed on or after October 1, 2025 [returns-2025-10.md#1].
 
-- [Full actual Desk terminal transcript](output/break-it-20261128-151013/desk-chat-transcript.txt)
-- [Machine-readable catalog audit, counts and saved policy response](output/break-it-20261128-151013/catalog-audit.json)
-- [Run metadata, source hashes and exact commands](output/break-it-20261128-151013/demo-metadata.json)
-- [Fresh extracted JSONL](output/break-it-20261128-151013/extraction/results.jsonl)
-- [Source-to-result mapping](output/break-it-20261128-151013/extraction/source-map.jsonl)
-- [Saved policy chat session](save/break-it-20261128-151013.json)
+**Restocking fee** (for discretionary returns of conforming goods)
+- January: 15% [returns-2025-01.md#1].
+- October: 10% [returns-2025-10.md#1].
 
-This is one live run of four selected existing fixture emails and one policy question with the configured model. The catalog count covers final persisted extraction outputs; it does not claim that no intermediate draft ever contained an unsupported value. No general hallucination rate or complete semantic-accuracy score was measured. The evidence also confirms that automatic draft-label evaluation did not run.
+In both versions, the fee is calculated on the net merchandise value paid for the returned quantity after the original bulk discount [returns-2025-01.md#1][returns-2025-10.md#1].
+
+**Which version applies:** The order placement date selects the version, and delivery starts the clock. An earlier order is assessed under the version in force on its order date, even if delivery or the return request happens after October 1 [returns-2025-10.md#1].
+```
+
+**Expected:** January has 30 days / 15% discretionary restocking; October has 45 days / 10%, with order-placement date selecting the version. **Observed:** both versions compared and correctly cited. PASS for this comparison. The apparent contradiction is conditional on order date, not grounds to discard the older document automatically.
+
+**Retrieval weakness:** the separate post-October-order question ranked `returns-2025-01.md#1` first, then `returns-2025-10.md#1`. Top four recovered the correct version and the live answer used it, but rank one alone would favor the older policy. No application-level version filter was added.
+
+## 4. Vague follow-up in real Desk chat
+
+Previous user question:
+
+```text
+/ask For orders placed after October 1, 2025, what is the unopened stock return window and restocking fee? --debug
+```
+
+Follow-up:
+
+```text
+/ask what about for bulk? --debug
+```
+
+Actual assistant response:
+
+```text
+Assuming you're asking about bulk pricing, the policy is Bulk Pricing (POL-005), version 1.0, effective 2025-01-01 [bulk-pricing.md#1].
+
+- Discounts apply separately to each order line, based on the quantity of that SKU in its selling unit. Unrelated SKUs and multiple orders can't be combined to reach a tier [bulk-pricing.md#1].
+- Tiers for one SKU [bulk-pricing.md#1]:
+  - 1-49: 0%
+  - 50-199: 5%
+  - 200-499: 10%
+  - 500 or more: 15%
+- Line total is quantity × charged base unit price × (1 − discount % / 100), rounded once at the end of the line to two decimals, half-up [bulk-pricing.md#1].
+- A box counts as one selling unit, even if it contains one hundred fasteners [bulk-pricing.md#1].
+- Quotes expire after thirty calendar days, and no quote reserves inventory until an order is accepted [bulk-pricing.md#1].
+
+If you meant bulk in another context, such as returns or shipping, please say which.
+```
+
+**Expected if conversational intent were preserved:** resolve bulk in the preceding returns context, or clarify. **Observed:** Desk assumed bulk pricing, returned its tiers and only then invited clarification. Pricing facts were cited, but intent was not preserved. **Limitation reproduced / context continuity FAIL.**
+
+Cause: `/ask` retrieval and answering receive only the raw latest question and fetched context, without earlier chat messages or a rewritten question. History remains saved for ordinary chat. This observation is for later learning; no Challenge 5 rewriting/hybrid search/reranking was implemented.
+
+Full terminal capture: [chat.txt](.desk/challenge4-verification/20261128T130200Z/chat.txt). The saved session has four messages (two user/assistant exchanges); save/exit made no model calls.
+
+## 5. Honest numeric retrieval baseline
+
+**Hit@4 = 10/10 (100%)** on ten assistant-defined answerable topic questions over ten policy documents / fifteen chunks. All expected sources were present, including both returns versions in the comparison. This is a small diagnostic set, not human-certified ground truth, production accuracy, answer accuracy or proof of correct first-rank/version selection. Out-of-scope and vague queries are excluded from this answerable-source denominator and discussed above.
+
+| Question | Expected sources | Actual top four IDs | Hit@4 |
+| --- | --- | --- | --- |
+| For orders placed after October 1, 2025, what is the unopened stock return window and restocking fee? | `returns-2025-10.md` | `returns-2025-01.md#1`, `returns-2025-10.md#1`, `price-adjustments-and-refunds.md#1`, `order-cancellation.md#1` | 1 |
+| How do January and October 2025 return policies differ in window and restocking fee? | `returns-2025-01.md`, `returns-2025-10.md` | `returns-2025-01.md#1`, `returns-2025-10.md#1`, `price-adjustments-and-refunds.md#1`, `bulk-pricing.md#1` | 1 |
+| What bulk discount applies to a line of 250 selling units of one SKU? | `bulk-pricing.md` | `bulk-pricing.md#1`, `price-adjustments-and-refunds.md#1`, `credit-terms.md#1`, `order-cancellation.md#1` | 1 |
+| Which standard carriers, transit times and below-threshold shipping rates are listed? | `shipping.md` | `shipping.md#1`, `bulk-pricing.md#1`, `damaged-goods.md#1`, `hazardous-goods.md#1` | 1 |
+| Who can raise a credit limit and what does Net 30 mean? | `credit-terms.md` | `credit-terms.md#1`, `price-adjustments-and-refunds.md#1`, `bulk-pricing.md#1`, `hazardous-goods.md#2` | 1 |
+| How long is the limited warranty for stock tools and what manufacturing defects does it cover? | `warranty.md` | `warranty.md#1`, `returns-2025-10.md#1`, `returns-2025-01.md#1`, `damaged-goods.md#1` | 1 |
+| How soon must visible transit damage or a short shipment be reported? | `damaged-goods.md` | `damaged-goods.md#1`, `shipping.md#1`, `hazardous-goods.md#1`, `price-adjustments-and-refunds.md#2` | 1 |
+| Can opened hazardous chemicals be returned or shipped by USPS? | `hazardous-goods.md` | `hazardous-goods.md#1`, `returns-2025-01.md#1`, `returns-2025-10.md#1`, `damaged-goods.md#1` | 1 |
+| Can a delivered order be cancelled and is there a cancellation fee before dispatch? | `order-cancellation.md` | `order-cancellation.md#1`, `price-adjustments-and-refunds.md#1`, `shipping.md#1`, `credit-terms.md#1` | 1 |
+| Who must approve a refund over $500 and does a one-dollar refund need approval? | `price-adjustments-and-refunds.md` | `price-adjustments-and-refunds.md#1`, `credit-terms.md#1`, `returns-2025-10.md#1`, `returns-2025-01.md#1` | 1 |
+
+The assistant wrote these straightforward questions after reading the policies; no independent human label review occurred. Queries/IDs/unrounded scores/provenance: [report.json](.desk/challenge4-verification/20261128T130200Z/report.json). A perfect small-set result or one lookup does not establish general semantic accuracy.
+
+## Learning observations
+
+- Correct vector shape and citation IDs establish plumbing, not per-claim entailment. A test intentionally shows that a false claim with an allowed citation passes the format guard.
+- Top-four retrieval recovered both dated policies, while rank one favored the wrong version for a post-October query. Read source conditions; similarity is not authority/confidence.
+- The SKU experiment exposes corpus coverage: a policy index cannot supply catalog specifications just because a token looks like a SKU.
+- The complete tier table worked; fixed windows can still separate headers/rows/conditions elsewhere.
+- Raw latest-turn retrieval lost follow-up intent. Recording the failure is part of the challenge; silently adding future-challenge features would hide it.
+
+All policy byte hashes matched before/after verification. No email batch, verifier redesign, model/credential switch or future-challenge implementation occurred.
+
+
+## Streaming recheck
+
+**28 November 2026, 19:27:40–19:28:58 IST.** These are the original BREAK IT experiments rechecked against the current streaming implementation. Earlier observations above are retained. General Build/Done/Stretch demos remain only in [challenge4.md](challenges/challenge4/challenge4.md).
+
+The exact single-question argv was executed by the real Desk CLI dispatcher with genuine existing-provider I/O; equivalent launcher input is shown for typing. Answers below are copied verbatim from the captured result. The vague follow-up ran in an actual Desk chat subprocess.
+
+### Exact SKU MS-VLV-0200
+
+Input:
+
+```powershell
+.\desk.cmd ask "What are the specifications and stock availability of SKU MS-VLV-0200?" --debug
+```
+
+Actual answer:
+
+```text
+not in the documents
+```
+
+[Full actual capture](.desk/challenge4-verification/20261128T135740Z/exact-sku.txt).
+
+### Answer in a table
+
+Input:
+
+```powershell
+.\desk.cmd ask "What bulk discount applies to 250 selling units of one SKU?" --debug
+```
+
+Actual answer:
+
+```text
+A quantity of 250 selling units of one SKU falls in the 200-499 tier, which has a 10% base discount [bulk-pricing.md#1]. The discount applies separately to each order line, using the quantity of that SKU in its selling unit [bulk-pricing.md#1].
+
+This is from Bulk Pricing (POL-005), Version 1.0, effective 2025-01-01 [bulk-pricing.md#1].
+```
+
+[Full actual capture](.desk/challenge4-verification/20261128T135740Z/table.txt).
+
+### Two dated policies disagree
+
+Input:
+
+```powershell
+.\desk.cmd ask "How do the January and October 2025 returns policies differ in return window and restocking fee?" --debug
+```
+
+Actual answer:
+
+```text
+**Return window**
+- January policy (POL-001, v1.0, effective 2025-01-01): 30 calendar days after delivery. It applies to orders placed January 1 through September 30, 2025 [returns-2025-01.md#1].
+- October policy (POL-011, v2.0, effective 2025-10-01): 45 calendar days after delivery. It applies to orders placed on or after October 1, 2025 [returns-2025-10.md#1].
+
+**Restocking fee** (for a discretionary return of conforming goods)
+- January policy: 15% [returns-2025-01.md#1].
+- October policy: 10% [returns-2025-10.md#1].
+
+**Same in both versions:** The order placement date selects the version, and delivery starts the clock [returns-2025-01.md#1][returns-2025-10.md#1]. The fee is calculated on the net merchandise value paid for the returned quantity after the original bulk discount [returns-2025-01.md#1][returns-2025-10.md#1].
+
+**Day-limit handling:**
+- January policy: requests received on day 30 are inside the window [returns-2025-01.md#1].
+- October policy: requests on day 45 qualify for review, and a request on day 46 requires an exception decision [returns-2025-10.md#1].
+```
+
+[Full actual capture](.desk/challenge4-verification/20261128T135740Z/conflict.txt).
+
+### Vague follow-up
+
+Actual chat inputs in order:
+
+```text
+/ask For orders placed after October 1, 2025, what is the unopened stock return window and restocking fee? --debug
+/ask what about for bulk? --debug
+```
+
+Actual follow-up response:
+
+```text
+Assuming you're asking about bulk pricing, here is what Meridian's Bulk Pricing policy (POL-005, version 1.0, effective 2025-01-01) says [bulk-pricing.md#1]:
+
+- Discounts apply separately to each order line, based on the quantity of that SKU in its selling unit. Unrelated SKUs and multiple orders can't be combined to reach a tier [bulk-pricing.md#1].
+- A box counts as one selling unit, even if it contains one hundred fasteners [bulk-pricing.md#1].
+- Discount tiers per SKU [bulk-pricing.md#1]:
+  - 1-49: 0%
+  - 50-199: 5%
+  - 200-499: 10%
+  - 500 or more: 15%
+- Line total is quantity × charged base unit price × (1 − discount % ÷ 100). It is rounded once at the end of the line to two decimals, half-up [bulk-pricing.md#1].
+- A return uses the original line discount and does not reprice the other units on the original order [bulk-pricing.md#1].
+- Quotes expire after thirty calendar days, and no quote reserves inventory until an order is accepted [bulk-pricing.md#1].
+
+If you meant something else by "bulk", such as shipping or returns, please say so. The supplied documents don't address that.
+```
+
+**Observed limitation:** the answer again assumed bulk pricing after a returns question. Context continuity FAIL; its invitation to clarify came after the assumed topic answer. Its final statement about what the supplied documents do not address is not a certified global-corpus fact. Citation formatting cannot prove such an absence claim. No rewriting/version filtering/hybrid retrieval was introduced to hide this result. [Actual chat capture](.desk/challenge4-verification/20261128T135740Z/chat.txt).
+
+### Retrieval number
+
+Current genuine local retrieval **hit@4 = 10/10 (100%)** on the same ten assistant-defined answerable topic questions. Both dated returns documents were present, but the post-October question still ranked the January policy first. This is a small diagnostic source-hit rate, not human-certified labels, general answer accuracy or guaranteed first-rank correctness. The original question/expected-source table above remains the benchmark definition. [Current queries, IDs and unrounded scores](.desk/challenge4-verification/20261128T135740Z/report.json).
