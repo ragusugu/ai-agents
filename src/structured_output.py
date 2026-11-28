@@ -4,7 +4,7 @@ import os
 import time
 from pathlib import Path
 
-from accuracy import DEFAULT_LABELS, ROOT, LabelSet, accuracy_report, label_source, load_labels, write_label_review
+from accuracy import ROOT, LabelSet, accuracy_report, label_source, load_labels, write_label_review
 from batch import create_plan, execute_plan
 from model import DeskError
 
@@ -22,12 +22,10 @@ def run_workflow(source, model, *, max_tokens=4000, output_dir=None, labels_path
                                   expected_count=expected_count, retry_review=retry_review,
                                   max_tokens=max_tokens)
     labels = None
-    explicit_labels = labels_path is not None
-    candidate = Path(labels_path) if explicit_labels else Path(DEFAULT_LABELS)
-    note = "No matching labels selected; extraction runs without an accuracy claim."
-    if explicit_labels or candidate.exists():
-        # Inspect declared membership before touching sources belonging to an
-        # unrelated default label set (especially for an external email path).
+    note = "No labels supplied; extraction runs without a label comparison or accuracy claim."
+    if labels_path is not None:
+        candidate = Path(labels_path)
+        # Only explicitly supplied labels may participate in this workflow.
         try:
             label_set = LabelSet.model_validate_json(candidate.read_text(encoding="utf-8"))
             declared = {os.path.normcase(str(label_source(label, project_root))) for label in label_set.labels}
@@ -41,7 +39,7 @@ def run_workflow(source, model, *, max_tokens=4000, output_dir=None, labels_path
             if require_reviewed and not reviewed:
                 raise DeskError("Human label review is pending; no model calls made.")
             note = f"Evaluation: {len(label_set.labels)} {'human-reviewed' if reviewed else 'assistant-draft'} labels."
-        elif explicit_labels:
+        else:
             raise DeskError("Labels include emails outside the selected input; no model calls made.")
     if require_reviewed and labels is None:
         raise DeskError("Provide reviewed labels for the selected emails; no model calls made.")

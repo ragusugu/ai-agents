@@ -536,7 +536,8 @@ def _format_structured_session_note(result, args, *, max_chars=96000):
 
 
 def print_accuracy_report(path, report, *, show_results=False, output_dir=None,
-                          sample_size=DEFAULT_SAMPLE_SIZE, include_emails=True, stats=None):
+                          sample_size=DEFAULT_SAMPLE_SIZE, include_emails=True, stats=None,
+                          field_level=False):
     if ui.enabled():
         if show_results:
             from extraction import read_run_history
@@ -547,6 +548,18 @@ def print_accuracy_report(path, report, *, show_results=False, output_dir=None,
                 if row is not None:
                     ui.email_result(dict(email_id=email["source_id"], status=row["status"], result=row["data"], reason=row.get("reason")))
         ui.console().print(ui.text(f"Detailed report: {path}", style="#94a3b8"))
+        if field_level:
+            from rich.table import Table
+            title = ("Human-reviewed field accuracy" if report["measurement_kind"] == "human_reviewed_field_accuracy"
+                     else "Assistant draft agreement per field (human review pending)")
+            table = Table(title=title, header_style="#94a3b8", border_style="#334155")
+            table.add_column("Field")
+            table.add_column("Correct / total", justify="right")
+            table.add_column("Score", justify="right")
+            for field, values in report["fields"].items():
+                score = "unmeasured" if values["score"] is None else f"{values['score']:.1%}"
+                table.add_row(field, f"{values['correct']} / {values['total']}", score)
+            ui.console().print(table)
         ui.score_panel(report, stats=stats)
         return
     if not include_emails:
@@ -636,7 +649,8 @@ def cmd_accuracy(args):
         _chat_notice("This is a historical score. It does not verify the current extraction schema or policy.",
                      "Historical output: this score does not validate the current extraction/verifier policy.")
     print_accuracy_report(path, report, show_results=args.show_results, sample_size=args.sample_size,
-                          output_dir=report["output_dir"], stats=response_stats(latency=time.perf_counter() - started))
+                          output_dir=report["output_dir"], stats=response_stats(latency=time.perf_counter() - started),
+                          field_level=getattr(args, "field_level", False))
 
 
 def _positive_count(value):
@@ -671,7 +685,7 @@ def build_parser():
 
     structured = sub.add_parser("structured-output", help="run the skill workflow on one email or a folder; sends selected emails to Bedrock")
     structured.add_argument("source", help="UTF-8 .txt/.eml email or folder containing emails (non-recursive)")
-    structured.add_argument("--labels", help="human labels or clearly identified draft labels; auto-selects project labels when applicable")
+    structured.add_argument("--labels", help="explicit label JSON for optional evaluation; no labels are selected automatically")
     structured.add_argument("--output-dir", help="output directory for this run; existing evidence is preserved")
     structured.add_argument("--model", help="override DESK_MODEL")
     structured.add_argument("--max-tokens", type=int, help="max output tokens per response")
@@ -693,6 +707,7 @@ def build_parser():
     accuracy.add_argument("--write-review", action="store_true", help="generate/update the human-readable source-label checklist")
     accuracy.add_argument("--require-reviewed", action="store_true", help="refuse assistant drafts without actual human review")
     accuracy.add_argument("--show-results", action="store_true", help="also print the evaluated emails' extracted JSON")
+    accuracy.add_argument("--field-level", action="store_true", help="also show the per-field table in the interactive terminal")
     accuracy.add_argument("--sample-size", type=_positive_count, default=DEFAULT_SAMPLE_SIZE,
                           help="limit displayed email details (default: 15); all labels are scored")
     accuracy.set_defaults(func=cmd_accuracy)

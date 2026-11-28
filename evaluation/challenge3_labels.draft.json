@@ -4,7 +4,7 @@
     "kind": "assistant_source_draft",
     "author": "Codex",
     "created_on": "2026-11-24",
-    "method": "Read only the 15 raw email files listed here. No model outputs, instructor answers, database scenario labels or catalog lookup were used to draft expected values. EM-001, whose model output was previously seen, is excluded.",
+    "method": "Read only the 15 raw email files listed here. No model outputs, instructor answers, database scenario labels or catalog lookup were used to draft expected values. EM-001, whose model output was previously seen, is excluded. On 2026-11-27 Codex reread all 15 selected raw sources, refreshed five changed-source SKU spellings/checksums and corrected EM-030 unit to the explicitly stated units. No predictions were read for this refresh. Still an assistant draft; no human approval.",
     "human_review": {
       "status": "pending",
       "reviewer": null,
@@ -16,7 +16,7 @@
       "source": {
         "id": "EM-002",
         "relative_path": "data/emails/EM-002.txt",
-        "sha256": "ecc9d35244e23116e08f3e561b17f6892aaef1189689b7fb9c5e076f472e541d"
+        "sha256": "a95b62959fff35f1d24721509298c030306441f5f49c261a1f8e0033b67e8652"
       },
       "expected": {
         "customer": "Alder Packaging LLC",
@@ -28,7 +28,7 @@
         "purchase_authorized": false,
         "line_items": [
           {
-            "sku": "MS-VLV0211",
+            "sku": "MS-VLV-0211",
             "description": "Bronze Check Valve 2 in NPT",
             "quantity": 60,
             "unit": "unit",
@@ -162,7 +162,7 @@
       "source": {
         "id": "EM-006",
         "relative_path": "data/emails/EM-006.txt",
-        "sha256": "796a5529800f3753a3135a5bf31e660e7dd063bb2ce48ba820e70116b67aa002"
+        "sha256": "ad18be5a727cea287558b3a019d1498d701c798c1a6257320e24f01d297385dd"
       },
       "expected": {
         "customer": "Dunefield Fabrication LLC",
@@ -174,7 +174,7 @@
         "purchase_authorized": false,
         "line_items": [
           {
-            "sku": "MS-FST0215",
+            "sku": "MS-FST-0215",
             "description": "Socket Cap Screw Box 1/2-13 Zinc plated",
             "quantity": 20,
             "unit": "unit",
@@ -486,7 +486,7 @@
       "source": {
         "id": "EM-017",
         "relative_path": "data/emails/EM-017.txt",
-        "sha256": "d2e8d67f7b135227248d4dfbee539591e34ffe66d02d1378eb6cbe262dec8970"
+        "sha256": "f3645999cfb8a5339387478a958485cb10ea951d329ebccd646ca8d7d66fcfbf"
       },
       "expected": {
         "customer": "Oakridge Water Systems LLC",
@@ -498,7 +498,7 @@
         "purchase_authorized": null,
         "line_items": [
           {
-            "sku": "MS-VLV0200",
+            "sku": "MS-VLV-0200",
             "description": null,
             "quantity": null,
             "unit": null,
@@ -682,7 +682,7 @@
       "source": {
         "id": "EM-025",
         "relative_path": "data/emails/EM-025.txt",
-        "sha256": "288e807c69624ee1544275585fd03364ef45bce3d28a40e80f992962a8d2459f"
+        "sha256": "56b5ec654aee38c4ea4054219a66e472c4f693b546d31ebac602bf2c0b1e4b70"
       },
       "expected": {
         "customer": "Juniper Packaging LLC",
@@ -694,7 +694,7 @@
         "purchase_authorized": null,
         "line_items": [
           {
-            "sku": "MS-VLV0206",
+            "sku": "MS-VLV-0206",
             "description": null,
             "quantity": 1,
             "unit": "unit",
@@ -796,7 +796,7 @@
       "source": {
         "id": "EM-030",
         "relative_path": "data/emails/EM-030.txt",
-        "sha256": "fe226cbf1442839ff6b285e48e9fb6efe37689479151e89d1e62e35c82791b14"
+        "sha256": "42ac752c625882691695d5e8f705bbe23e97b6b0b551d4e46924d118509a592a"
       },
       "expected": {
         "customer": "Beacon Mechanical LLC",
@@ -808,10 +808,10 @@
         "purchase_authorized": false,
         "line_items": [
           {
-            "sku": "MS-PTL0219",
+            "sku": "MS-PTL-0219",
             "description": "Reciprocating Saw Extended Runtime 18V kit",
             "quantity": 200,
-            "unit": "selling unit",
+            "unit": "unit",
             "description_terms": [
               [
                 "reciprocating"
@@ -839,7 +839,7 @@
           }
         ]
       },
-      "notes": "Pricing question explicitly denies purchase authorization. Quantity 200 is known; do not infer tier, price or discount values."
+      "notes": "Quotation only; current source explicitly says 200 units. No purchase order is authorized. Do not infer prices or discounts."
     }
   ]
 }

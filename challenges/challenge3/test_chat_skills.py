@@ -17,6 +17,7 @@ import chat_commands
 import desk
 import model
 import skill_tools
+import structured_output
 
 
 class EventStream(list):
@@ -186,6 +187,38 @@ class ChatSkillTests(OfflineFixture, unittest.TestCase):
         self.assertIn(str(self.email), history[1]["content"][0]["text"])
         self.assertTrue(all(set(block) == {"text"} for m in history for block in m["content"]))
         self.assertIn("new requests: 0", output.getvalue())
+
+    def test_chat_without_explicit_labels_never_checks_project_drafts(self):
+        out = self.base / "unlabelled results"
+        self.run_extraction(output=out)
+        labels = self.labels()
+        for route in ("slash", "tool"):
+            with self.subTest(route=route):
+                state = self.state()
+                output = io.StringIO()
+                # A matching draft file exists, but the workflow must not even
+                # resolve it unless the caller supplies a label-file path.
+                with patch.object(structured_output, "Path", return_value=labels) as label_path, \
+                     patch.object(structured_output, "accuracy_report") as score, \
+                     patch.object(structured_output, "write_label_review") as review, \
+                     contextlib.redirect_stdout(output):
+                    if route == "slash":
+                        desk.handle_command(
+                            f'/structured-output "{self.email}" --output-dir "{out}" --summary-only', state)
+                    else:
+                        desk._run_chat_skill([dict(name="structured_output", input=dict(
+                            source=str(self.email), output_dir=str(out), summary_only=True))],
+                            "Use the structured-output skill on my email", state)
+                label_path.assert_not_called()
+                score.assert_not_called()
+                review.assert_not_called()
+                self.assertEqual(len(state["messages"]), 2)
+                note = state["messages"][-1]["content"][0]["text"]
+                self.assertIn("Validation: 1/1 accounted for", note)
+                self.assertIn("Accuracy: unmeasured", note)
+                self.assertNotIn("Assistant draft agreement", note)
+                self.assertNotIn("Assistant draft agreement", output.getvalue())
+                self.assertFalse((out / "accuracy-report.json").exists())
 
     def test_normal_reply_and_clarification_do_not_execute_workflows(self):
         streams = iter([text_stream("Which email folder should I use?"), text_stream("I can explain the skill without running it.")])

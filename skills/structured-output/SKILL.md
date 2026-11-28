@@ -60,9 +60,9 @@ files. No SQLite database or separate tracking command is required.
 
 ## Output sample and evaluation
 
-For the project's email set, the workflow automatically selects the matching
-15-label file in `evaluation/challenge3_labels.draft.json`. A different dataset
-can supply `--labels "path\to\labels.json"`. Explicit labels must refer only to
+The workflow does not automatically select or check the project's draft labels.
+Run label evaluation only when the user explicitly supplies a label-file path
+with `--labels "path\to\labels.json"`. Explicit labels must refer only to
 selected source emails and match their checksums before any model call.
 
 Process and save ALL selected emails, then display at most 15 outputs in chat by
@@ -77,7 +77,7 @@ Show aggregate coverage and field scores for ALL supplied matching labels. The
 validation response must end with the overall field score and labelled-email
 coverage, including with `--summary-only`; do not require a separate accuracy
 command. Show total validation/review counts separately from accuracy. With no
-matching labels, end with accuracy unmeasured rather than inventing a percentage.
+explicitly supplied labels, end with accuracy unmeasured rather than inventing a percentage.
 The same final summary belongs in the saved chat session after the sample data.
 Pending annotations must still be named assistant draft agreement.
 The chat response highlights one overall score. Keep the detailed per-field
@@ -89,7 +89,7 @@ session token totals, context usage and any configured cost estimate. The shared
 dispatcher collects these for all current and future commands; do not add a
 separate metrics switch or duplicate the usage inside a new challenge.
 
-The 15-output display sample and the hand-labelled evaluation set are independent;
+The 15-output display sample and any explicitly supplied evaluation set are independent;
 the displayed sample is not necessarily the labelled subset. Report the actual
 labelled count. Never invent missing predictions or scores, or limit evaluation
 to the output sample. `accuracy --show-results` also caps displayed email details
@@ -107,6 +107,10 @@ approved status, the accuracy report runs locally with one command:
 ```powershell
 .\desk.cmd accuracy --require-reviewed --show-results
 ```
+
+Add `--field-level` to the standalone accuracy command to print the detailed
+per-field table in an interactive terminal. Plain redirected output already
+contains that table. The chat workflow keeps its compact overall-score summary.
 
 This report makes no model calls. Confidence is never scored as accuracy;
 missing/review predictions stay in the score denominators. Line items are matched

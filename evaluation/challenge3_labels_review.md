@@ -16,7 +16,7 @@ Requested date: None; urgency: None.
 
 | SKU | Description | Quantity | Unit |
 | --- | --- | ---: | --- |
-| MS-VLV0211 | Bronze Check Valve 2 in NPT | 60 | unit |
+| MS-VLV-0211 | Bronze Check Valve 2 in NPT | 60 | unit |
 
 Ambiguity/review note: No purchase order yet. Shutdown is not an explicit requested calendar date; do not use the email date.
 
@@ -48,7 +48,7 @@ Requested date: None; urgency: None.
 
 | SKU | Description | Quantity | Unit |
 | --- | --- | ---: | --- |
-| MS-FST0215 | Socket Cap Screw Box 1/2-13 Zinc plated | 20 | unit |
+| MS-FST-0215 | Socket Cap Screw Box 1/2-13 Zinc plated | 20 | unit |
 
 Ambiguity/review note: The source says 20 units of a box product. Do not replace the requested selling unit with an inferred pack size.
 
@@ -137,7 +137,7 @@ Requested date: None; urgency: None.
 
 | SKU | Description | Quantity | Unit |
 | --- | --- | ---: | --- |
-| MS-VLV0200 | not supplied | null | null |
+| MS-VLV-0200 | not supplied | null | null |
 
 Ambiguity/review note: Pricing clarification does not assert a proven price error; classify other rather than inventing a complaint/refund. Quantity and selling unit are asked about, not provided.
 
@@ -197,7 +197,7 @@ Requested date: None; urgency: None.
 
 | SKU | Description | Quantity | Unit |
 | --- | --- | ---: | --- |
-| MS-VLV0206 | not supplied | 1 | unit |
+| MS-VLV-0206 | not supplied | 1 | unit |
 
 Ambiguity/review note: Product name is not supplied. RMA and policy questions are explicit secondary requests, not permission to execute a return.
 
@@ -227,8 +227,8 @@ Requested date: None; urgency: None.
 
 | SKU | Description | Quantity | Unit |
 | --- | --- | ---: | --- |
-| MS-PTL0219 | Reciprocating Saw Extended Runtime 18V kit | 200 | selling unit |
+| MS-PTL-0219 | Reciprocating Saw Extended Runtime 18V kit | 200 | unit |
 
-Ambiguity/review note: Pricing question explicitly denies purchase authorization. Quantity 200 is known; do not infer tier, price or discount values.
+Ambiguity/review note: Quotation only; current source explicitly says 200 units. No purchase order is authorized. Do not infer prices or discounts.
 
 - [ ] Human checked against the source and corrected the draft JSON if needed.

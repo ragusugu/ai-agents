@@ -16,7 +16,7 @@ class StructuredOutputInput(BaseModel):
 
     source: str = Field(description="Exact UTF-8 .txt/.eml email file or flat email-folder path supplied by the user or unambiguous conversation context. Never invent a path.")
     output_dir: str | None = Field(default=None, description="Requested output folder. Omit to use the project's output folder.")
-    labels: str | None = Field(default=None, description="Explicit label file, if supplied; otherwise matching project labels are selected automatically.")
+    labels: str | None = Field(default=None, description="Exact label-file path explicitly supplied by the user. Omit when no label file was supplied; labels are never selected automatically.")
     sample_size: int = Field(default=15, gt=0, description="Display limit only; all emails are processed.")
     summary_only: bool = False
     plan_only: bool = Field(default=False, description="True for an explicit preview/dry run; no email extraction requests.")
@@ -33,7 +33,7 @@ def tool_config():
             f"Extracted output has only these fields: {', '.join(OrderRequest.model_fields)}. "
             "Each line item has sku, description, quantity and unit. Unknown facts stay null. "
             "Uses native schema extraction, validates/repairs, saves JSONL and review outcomes, and "
-            "shows samples plus accuracy when labels exist. Reuses compatible saved outcomes. "
+            "shows samples plus accuracy only with an explicitly supplied label file. Reuses compatible saved outcomes. "
             "Relative paths refer to the Desk project. Select this tool when the current user asks "
             "to run/apply/use the skill or extract/validate email data. Ask for a missing source path. "
             "Questions about usage, examples and requests to edit code do not request extraction."
